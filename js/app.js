@@ -937,7 +937,7 @@ function registerServiceWorker() {
 
 // ==================== Supabase 云端同步 ====================
 
-let supabase = null;
+let _supabaseClient = null;
 let syncDebounceTimer = null;
 const SYNC_DEBOUNCE_MS = 2000; // 2秒防抖，避免频繁推送
 
@@ -957,10 +957,10 @@ function initSupabase() {
     const config = getSyncConfig();
     if (config.url && config.key && window.supabase) {
         try {
-            supabase = window.supabase.createClient(config.url, config.key);
+            _supabaseClient = window.supabase.createClient(config.url, config.key);
             return true;
         } catch (e) {
-            supabase = null;
+            _supabaseClient = null;
             return false;
         }
     }
@@ -1036,7 +1036,7 @@ function autoPullOnStart() {
 
     const config = getSyncConfig();
     setSyncIndicator('syncing');
-    supabase
+    _supabaseClient
         .from('sync_data')
         .select('data, updated_at')
         .eq('sync_key', config.syncKey)
@@ -1112,7 +1112,7 @@ async function syncPull() {
     setSyncIndicator('syncing');
     const config = getSyncConfig();
     try {
-        const { data, error } = await supabase
+        const { data, error } = await _supabaseClient
             .from('sync_data')
             .select('data, updated_at')
             .eq('sync_key', config.syncKey)
@@ -1148,7 +1148,7 @@ async function doPush() {
         updated_at: new Date().toISOString()
     };
 
-    const { error } = await supabase
+    const { error } = await _supabaseClient
         .from('sync_data')
         .upsert(payload, { onConflict: 'sync_key' });
 

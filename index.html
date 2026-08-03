@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="记账本">
+    <meta name="theme-color" content="#4A90D9">
+    <link rel="manifest" href="manifest.json">
+    <title>记账本</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- ========== 首页 ========== -->
+        <div class="page page-home active" id="page-home">
+            <div class="header">
+                <div class="header-date" id="currentMonth"></div>
+                <div class="header-balance">
+                    <div class="balance-item">
+                        <span class="balance-label">本月支出</span>
+                        <span class="balance-amount expense-color" id="monthExpense">¥0.00</span>
+                    </div>
+                    <div class="balance-item">
+                        <span class="balance-label">本月收入</span>
+                        <span class="balance-amount income-color" id="monthIncome">¥0.00</span>
+                    </div>
+                    <div class="balance-item">
+                        <span class="balance-label">本月结余</span>
+                        <span class="balance-amount" id="monthBalance">¥0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="budget-section" id="budgetSection">
+                <div class="budget-header">
+                    <span class="budget-title">本月预算</span>
+                    <span class="budget-amount" id="budgetText">未设置</span>
+                </div>
+                <div class="budget-bar">
+                    <div class="budget-bar-fill" id="budgetBarFill"></div>
+                </div>
+                <div class="budget-detail" id="budgetDetail"></div>
+            </div>
+
+            <div class="section-title">
+                <span>最近账目</span>
+                <span class="section-more" onclick="switchPage('list')">查看全部 ></span>
+            </div>
+            <div class="transaction-list" id="recentList">
+                <!-- 动态填充 -->
+            </div>
+        </div>
+
+        <!-- ========== 统计页 ========== -->
+        <div class="page page-stats" id="page-stats">
+            <div class="nav-bar">
+                <span class="nav-title">统计报表</span>
+            </div>
+            <div class="stats-tabs">
+                <button class="stats-tab active" data-type="expense">支出</button>
+                <button class="stats-tab" data-type="income">收入</button>
+            </div>
+            <div class="stats-month-nav">
+                <span class="month-nav-btn" onclick="changeStatsMonth(-1)"><</span>
+                <span id="statsMonthLabel"></span>
+                <span class="month-nav-btn" onclick="changeStatsMonth(1)">></span>
+            </div>
+            <div class="stats-summary">
+                <div class="stats-summary-item">
+                    <span class="stats-summary-label">总计</span>
+                    <span class="stats-summary-amount" id="statsTotal">¥0.00</span>
+                </div>
+                <div class="stats-summary-item">
+                    <span class="stats-summary-label">笔数</span>
+                    <span class="stats-summary-amount" id="statsCount">0</span>
+                </div>
+                <div class="stats-summary-item">
+                    <span class="stats-summary-label">平均</span>
+                    <span class="stats-summary-amount" id="statsAvg">¥0.00</span>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">分类占比</div>
+                <canvas id="pieChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">每日趋势</div>
+                <canvas id="barChart"></canvas>
+            </div>
+            <div class="category-detail-list" id="categoryDetailList">
+                <!-- 动态填充 -->
+            </div>
+        </div>
+
+        <!-- ========== 账目列表页 ========== -->
+        <div class="page page-list" id="page-list">
+            <div class="nav-bar">
+                <span class="nav-title">账目明细</span>
+            </div>
+            <div class="filter-bar">
+                <button class="filter-btn active" data-filter="all">全部</button>
+                <button class="filter-btn" data-filter="expense">支出</button>
+                <button class="filter-btn" data-filter="income">收入</button>
+            </div>
+            <div class="list-month-nav">
+                <span class="month-nav-btn" onclick="changeListMonth(-1)"><</span>
+                <span id="listMonthLabel"></span>
+                <span class="month-nav-btn" onclick="changeListMonth(1)">></span>
+            </div>
+            <div class="transaction-list full-list" id="fullList">
+                <!-- 动态填充 -->
+            </div>
+        </div>
+
+        <!-- ========== 设置页 ========== -->
+        <div class="page page-settings" id="page-settings">
+            <div class="nav-bar">
+                <span class="nav-title">设置</span>
+            </div>
+            <div class="settings-group">
+                <div class="settings-item" onclick="openBudgetModal()">
+                    <span class="settings-icon">💰</span>
+                    <span class="settings-label">预算管理</span>
+                    <span class="settings-arrow">></span>
+                </div>
+                <div class="settings-item" onclick="openCategoryModal()">
+                    <span class="settings-icon">🏷️</span>
+                    <span class="settings-label">分类管理</span>
+                    <span class="settings-arrow">></span>
+                </div>
+            </div>
+            <div class="settings-group">
+                <div class="settings-item" onclick="exportData()">
+                    <span class="settings-icon">📤</span>
+                    <span class="settings-label">导出数据</span>
+                    <span class="settings-arrow">></span>
+                </div>
+                <div class="settings-item" onclick="importData()">
+                    <span class="settings-icon">📥</span>
+                    <span class="settings-label">导入数据</span>
+                    <span class="settings-arrow">></span>
+                    <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImport(event)">
+                </div>
+            </div>
+            <div class="settings-group">
+                <div class="settings-item" onclick="clearAllData()">
+                    <span class="settings-icon">🗑️</span>
+                    <span class="settings-label danger">清空所有数据</span>
+                    <span class="settings-arrow">></span>
+                </div>
+            </div>
+            <div class="app-info">
+                <p>记账本 v1.0.0</p>
+                <p>PWA 跨平台记账应用</p>
+            </div>
+        </div>
+
+        <!-- ========== 底部导航 ========== -->
+        <div class="tab-bar">
+            <div class="tab-item active" data-page="home" onclick="switchPage('home')">
+                <span class="tab-icon">🏠</span>
+                <span class="tab-label">首页</span>
+            </div>
+            <div class="tab-item" data-page="stats" onclick="switchPage('stats')">
+                <span class="tab-icon">📊</span>
+                <span class="tab-label">统计</span>
+            </div>
+            <div class="tab-item tab-add" onclick="openAddModal()">
+                <div class="tab-add-btn">+</div>
+            </div>
+            <div class="tab-item" data-page="list" onclick="switchPage('list')">
+                <span class="tab-icon">📋</span>
+                <span class="tab-label">明细</span>
+            </div>
+            <div class="tab-item" data-page="settings" onclick="switchPage('settings')">
+                <span class="tab-icon">⚙️</span>
+                <span class="tab-label">设置</span>
+            </div>
+        </div>
+
+        <!-- ========== 记一笔弹窗 ========== -->
+        <div class="modal-overlay" id="addModal">
+            <div class="modal-content add-modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="closeAddModal()">✕</span>
+                    <span class="modal-title">记一笔</span>
+                    <span class="modal-save" onclick="saveTransaction()">保存</span>
+                </div>
+                <div class="modal-body">
+                    <div class="type-switch">
+                        <button class="type-btn active" data-type="expense" onclick="switchType('expense')">支出</button>
+                        <button class="type-btn" data-type="income" onclick="switchType('income')">收入</button>
+                    </div>
+                    <div class="amount-input-section">
+                        <span class="amount-symbol">¥</span>
+                        <input type="number" class="amount-input" id="amountInput" placeholder="0.00" step="0.01" inputmode="decimal">
+                    </div>
+                    <div class="category-grid" id="categoryGrid">
+                        <!-- 动态填充 -->
+                    </div>
+                    <div class="form-row">
+                        <input type="date" class="date-input" id="dateInput">
+                    </div>
+                    <div class="form-row">
+                        <input type="text" class="note-input" id="noteInput" placeholder="备注（可选）" maxlength="50">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 预算弹窗 ========== -->
+        <div class="modal-overlay" id="budgetModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="closeBudgetModal()">✕</span>
+                    <span class="modal-title">设置月度预算</span>
+                    <span class="modal-save" onclick="saveBudget()">保存</span>
+                </div>
+                <div class="modal-body">
+                    <div class="amount-input-section">
+                        <span class="amount-symbol">¥</span>
+                        <input type="number" class="amount-input" id="budgetInput" placeholder="0.00" step="0.01" inputmode="decimal">
+                    </div>
+                    <p class="modal-hint">设置每月支出预算，帮助你控制消费</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 分类管理弹窗 ========== -->
+        <div class="modal-overlay" id="categoryModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="closeCategoryModal()">✕</span>
+                    <span class="modal-title">分类管理</span>
+                    <span class="modal-save" onclick="addCustomCategory()">+</span>
+                </div>
+                <div class="modal-body">
+                    <div class="category-manage-tabs">
+                        <button class="cat-manage-tab active" data-type="expense" onclick="switchCategoryTab('expense')">支出分类</button>
+                        <button class="cat-manage-tab" data-type="income" onclick="switchCategoryTab('income')">收入分类</button>
+                    </div>
+                    <div class="category-manage-list" id="categoryManageList">
+                        <!-- 动态填充 -->
+                    </div>
+                    <div class="add-category-row">
+                        <input type="text" id="newCategoryInput" placeholder="输入新分类名称" maxlength="8">
+                        <button class="add-category-btn" onclick="addCustomCategory()">添加</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== Toast 提示 ========== -->
+        <div class="toast" id="toast"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

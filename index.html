@@ -16,7 +16,10 @@
         <!-- ========== 首页 ========== -->
         <div class="page page-home active" id="page-home">
             <div class="header">
-                <div class="header-date" id="currentMonth"></div>
+                <div class="header-date">
+                <span id="currentMonth"></span>
+                <span class="sync-indicator" id="syncIndicator" onclick="openSyncModal()">☁️</span>
+            </div>
                 <div class="header-balance">
                     <div class="balance-item">
                         <span class="balance-label">本月支出</span>
@@ -128,6 +131,14 @@
                 <div class="settings-item" onclick="openCategoryModal()">
                     <span class="settings-icon">🏷️</span>
                     <span class="settings-label">分类管理</span>
+                    <span class="settings-arrow">></span>
+                </div>
+            </div>
+            <div class="settings-group">
+                <div class="settings-item" onclick="openSyncModal()">
+                    <span class="settings-icon">☁️</span>
+                    <span class="settings-label">云端同步</span>
+                    <span class="settings-value" id="syncStatusBadge">未配置</span>
                     <span class="settings-arrow">></span>
                 </div>
             </div>
@@ -252,10 +263,41 @@
             </div>
         </div>
 
+        <!-- ========== 云端同步弹窗 ========== -->
+        <div class="modal-overlay" id="syncModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="closeSyncModal()">✕</span>
+                    <span class="modal-title">云端同步设置</span>
+                    <span class="modal-save" onclick="saveSyncConfig()">保存</span>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <label class="form-label">Supabase URL</label>
+                        <input type="text" class="note-input" id="supabaseUrl" placeholder="https://xxxxx.supabase.co" autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">Anon Key</label>
+                        <input type="text" class="note-input" id="supabaseKey" placeholder="eyJhbGciOi..." autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">同步密钥（两台手机设置相同密钥）</label>
+                        <input type="text" class="note-input" id="syncKey" placeholder="例如：family2024" maxlength="50" autocomplete="off">
+                    </div>
+                    <div class="sync-actions">
+                        <button class="sync-btn" onclick="syncPush()">☁️ 上传到云端</button>
+                        <button class="sync-btn" onclick="syncPull()">📥 从云端下载</button>
+                    </div>
+                    <p class="modal-hint" id="syncHint">配置后，两台手机即可自动同步数据</p>
+                </div>
+            </div>
+        </div>
+
         <!-- ========== Toast 提示 ========== -->
         <div class="toast" id="toast"></div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="js/app.js"></script>
 </body>

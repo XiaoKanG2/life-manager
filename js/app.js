@@ -5,6 +5,7 @@
 const STORAGE_KEY = 'accounting_app_data';
 const BUDGET_KEY = 'accounting_app_budget';
 const CATEGORY_KEY = 'accounting_app_categories';
+const SYNC_CONFIG_KEY = 'accounting_app_sync_config';
 
 // 默认支出分类
 const DEFAULT_EXPENSE_CATEGORIES = [
@@ -44,6 +45,7 @@ function loadCategories() {
 
 function saveCategories(categories) {
     localStorage.setItem(CATEGORY_KEY, JSON.stringify(categories));
+    autoPushOnChange();
 }
 
 function getCategories() {
@@ -60,6 +62,7 @@ function loadTransactions() {
 
 function saveTransactions(transactions) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
+    autoPushOnChange();
 }
 
 function loadBudget() {
@@ -72,6 +75,7 @@ function loadBudget() {
 
 function saveBudget(budget) {
     localStorage.setItem(BUDGET_KEY, JSON.stringify(budget));
+    autoPushOnChange();
 }
 
 // ==================== 应用状态 ====================
@@ -98,7 +102,11 @@ function init() {
     setDefaultCategoryIfEmpty();
     updateAllViews();
     updateDateInput();
+    updateSyncBadge();
     registerServiceWorker();
+
+    // 启动时自动从云端拉取数据
+    autoPullOnStart();
 }
 
 function setDefaultCategoryIfEmpty() {
@@ -887,10 +895,11 @@ function handleImport(event) {
 
 function clearAllData() {
     if (confirm('⚠️ 确定要清空所有记账数据吗？此操作不可恢复！')) {
-        if (confirm('再次确认：真的要删除所有数据吗？')) {
+        if (confirm('再次确认：真的要删除所有数据��？')) {
             localStorage.removeItem(STORAGE_KEY);
             localStorage.removeItem(BUDGET_KEY);
             updateAllViews();
+            autoPushOnChange();
             showToast('所有数据已清空');
         }
     }
@@ -924,6 +933,278 @@ function registerServiceWorker() {
             .then(() => {})
             .catch(() => {});
     }
+}
+
+// ==================== Supabase 云端同步 ====================
+
+let supabase = null;
+let syncDebounceTimer = null;
+const SYNC_DEBOUNCE_MS = 2000; // 2秒防抖，避免频繁推送
+
+function getSyncConfig() {
+    const saved = localStorage.getItem(SYNC_CONFIG_KEY);
+    if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+    }
+    return { url: '', key: '', syncKey: '' };
+}
+
+function setSyncConfig(config) {
+    localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
+}
+
+function initSupabase() {
+    const config = getSyncConfig();
+    if (config.url && config.key && window.supabase) {
+        try {
+            supabase = window.supabase.createClient(config.url, config.key);
+            return true;
+        } catch (e) {
+            supabase = null;
+            return false;
+        }
+    }
+    return false;
+}
+
+function isSyncConfigured() {
+    const config = getSyncConfig();
+    return !!(config.url && config.key && config.syncKey);
+}
+
+// 打开同步设置弹窗
+function openSyncModal() {
+    const config = getSyncConfig();
+    document.getElementById('supabaseUrl').value = config.url || '';
+    document.getElementById('supabaseKey').value = config.key || '';
+    document.getElementById('syncKey').value = config.syncKey || '';
+    document.getElementById('syncModal').classList.add('active');
+}
+
+function closeSyncModal() {
+    document.getElementById('syncModal').classList.remove('active');
+}
+
+// 保存同步配置
+function saveSyncConfig() {
+    const url = document.getElementById('supabaseUrl').value.trim();
+    const key = document.getElementById('supabaseKey').value.trim();
+    const syncKey = document.getElementById('syncKey').value.trim();
+
+    if (!url || !key || !syncKey) {
+        showToast('请填写完整的配置信息');
+        return;
+    }
+
+    const config = { url, key, syncKey };
+    setSyncConfig(config);
+
+    if (initSupabase()) {
+        showToast('同步配置成功');
+        updateSyncBadge();
+        closeSyncModal();
+        // 首次配置后立即同步
+        syncPush();
+    } else {
+        showToast('Supabase 连接失败，请检查配置');
+    }
+}
+
+// 更新同步状态徽章
+function updateSyncBadge() {
+    const badge = document.getElementById('syncStatusBadge');
+    const indicator = document.getElementById('syncIndicator');
+    if (!badge || !indicator) return;
+
+    if (isSyncConfigured()) {
+        badge.textContent = '已配置';
+        badge.className = 'settings-value connected';
+        indicator.textContent = '☁️';
+    } else {
+        badge.textContent = '未配置';
+        badge.className = 'settings-value';
+        indicator.textContent = '☁️';
+    }
+}
+
+// 启动时自动拉取
+function autoPullOnStart() {
+    if (!isSyncConfigured()) return;
+    if (!initSupabase()) return;
+
+    const config = getSyncConfig();
+    setSyncIndicator('syncing');
+    supabase
+        .from('sync_data')
+        .select('data, updated_at')
+        .eq('sync_key', config.syncKey)
+        .single()
+        .then(({ data, error }) => {
+            if (error && error.code !== 'PGRST116') {
+                setSyncIndicator('error');
+                return;
+            }
+            if (data && data.data) {
+                mergeCloudData(data.data);
+                updateAllViews();
+                setSyncIndicator('synced');
+                showToast('已同步云端数据');
+            } else {
+                setSyncIndicator('synced');
+            }
+        })
+        .catch(() => {
+            setSyncIndicator('error');
+        });
+}
+
+// 变更后自动推送（带防抖）
+function autoPushOnChange() {
+    if (!isSyncConfigured()) return;
+
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(() => {
+        if (!initSupabase()) return;
+        setSyncIndicator('syncing');
+        doPush().then(() => {
+            setSyncIndicator('synced');
+        }).catch(() => {
+            setSyncIndicator('error');
+        });
+    }, SYNC_DEBOUNCE_MS);
+}
+
+// 手动上传
+async function syncPush() {
+    if (!isSyncConfigured()) {
+        showToast('请先配置云端同步');
+        return;
+    }
+    if (!initSupabase()) {
+        showToast('Supabase 连接失败');
+        return;
+    }
+
+    setSyncIndicator('syncing');
+    try {
+        await doPush();
+        setSyncIndicator('synced');
+        showToast('数据已上传到云端');
+    } catch (e) {
+        setSyncIndicator('error');
+        showToast('上传失败：' + (e.message || '网络错误'));
+    }
+}
+
+// 手动下载
+async function syncPull() {
+    if (!isSyncConfigured()) {
+        showToast('请先配置云端同步');
+        return;
+    }
+    if (!initSupabase()) {
+        showToast('Supabase 连接失败');
+        return;
+    }
+
+    setSyncIndicator('syncing');
+    const config = getSyncConfig();
+    try {
+        const { data, error } = await supabase
+            .from('sync_data')
+            .select('data, updated_at')
+            .eq('sync_key', config.syncKey)
+            .single();
+
+        if (error && error.code !== 'PGRST116') throw error;
+
+        if (data && data.data) {
+            mergeCloudData(data.data);
+            updateAllViews();
+            setSyncIndicator('synced');
+            showToast('数据已从云端同步');
+        } else {
+            setSyncIndicator('synced');
+            showToast('云端暂无数据');
+        }
+    } catch (e) {
+        setSyncIndicator('error');
+        showToast('下载失败：' + (e.message || '网络错误'));
+    }
+}
+
+// 核心推送逻辑
+async function doPush() {
+    const config = getSyncConfig();
+    const payload = {
+        sync_key: config.syncKey,
+        data: {
+            transactions: loadTransactions(),
+            budgets: loadBudget(),
+            categories: getCategories()
+        },
+        updated_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase
+        .from('sync_data')
+        .upsert(payload, { onConflict: 'sync_key' });
+
+    if (error) throw error;
+}
+
+// 合并云端数据到本地（以ID去重，保留更新时间更新的记录）
+function mergeCloudData(cloudData) {
+    if (!cloudData || !cloudData.transactions) return;
+
+    const localTxns = loadTransactions();
+    const localMap = new Map(localTxns.map(t => [t.id, t]));
+
+    // 云端数据合并到本地
+    (cloudData.transactions || []).forEach(ct => {
+        const local = localMap.get(ct.id);
+        if (!local || (ct.updatedAt && (!local.updatedAt || ct.updatedAt > local.updatedAt))) {
+            localMap.set(ct.id, ct);
+        }
+    });
+
+    // 本地独有的保留
+    localTxns.forEach(t => {
+        if (!localMap.has(t.id)) localMap.set(t.id, t);
+    });
+
+    const merged = Array.from(localMap.values());
+    // 直接写 localStorage 避免触发 autoPushOnChange
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+
+    // 合并预算
+    if (cloudData.budgets) {
+        const localBudgets = loadBudget();
+        const mergedBudgets = { ...cloudData.budgets, ...localBudgets };
+        localStorage.setItem(BUDGET_KEY, JSON.stringify(mergedBudgets));
+    }
+
+    // 合并分类
+    if (cloudData.categories) {
+        const localCats = getCategories();
+        const cloudCats = cloudData.categories;
+        // 保留本地分类中云端没有的
+        ['expense', 'income'].forEach(type => {
+            if (cloudCats[type] && localCats[type]) {
+                const cloudIds = new Set(cloudCats[type].map(c => c.id));
+                const localOnly = localCats[type].filter(c => !cloudIds.has(c.id));
+                cloudCats[type] = [...cloudCats[type], ...localOnly];
+            }
+        });
+        localStorage.setItem(CATEGORY_KEY, JSON.stringify(cloudCats));
+    }
+}
+
+// 设置同步图标状态
+function setSyncIndicator(state) {
+    const indicator = document.getElementById('syncIndicator');
+    if (!indicator) return;
+    indicator.className = 'sync-indicator ' + state;
 }
 
 // ==================== 点击弹窗遮罩关闭 ====================

@@ -1021,14 +1021,22 @@ function getSyncConfig() {
 function setSyncConfig(config) { localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config)); }
 
 function initSupabase() {
+  // 已初始化且配置未变则复用
+  if (_supabaseClient) return true;
   const config = getSyncConfig();
-  if (config.url && config.key && window.supabase) {
-    try {
-      _supabaseClient = window.supabase.createClient(config.url, config.key);
-      return true;
-    } catch (e) { _supabaseClient = null; return false; }
+  if (!config.url || !config.key) return false;
+  if (!window.supabase) {
+    console.error('Supabase CDN 未加载，window.supabase 不可用');
+    return false;
   }
-  return false;
+  try {
+    _supabaseClient = window.supabase.createClient(config.url, config.key);
+    return true;
+  } catch (e) {
+    console.error('Supabase 初始化失败:', e);
+    _supabaseClient = null;
+    return false;
+  }
 }
 
 function isSyncConfigured() {
@@ -1054,13 +1062,15 @@ function saveSyncConfigUI() {
   const syncKey = document.getElementById('syncKey').value.trim();
   if (!url || !key || !syncKey) { showToast('请填写完整的配置信息'); return; }
   setSyncConfig({ url, key, syncKey });
+  // 重置客户端，以便用新配置重新初始化
+  _supabaseClient = null;
   if (initSupabase()) {
     showToast('同步配置成功');
     updateSyncBadge();
     closeSyncModal();
     syncPush();
   } else {
-    showToast('Supabase 连接失败');
+    showToast('Supabase 连接失败，请检查 URL 和 Key');
   }
 }
 
@@ -1081,7 +1091,9 @@ function updateSyncBadge() {
 
 function autoPullOnStart() {
   try {
-    if (!isSyncConfigured() || !initSupabase()) return;
+    if (!isSyncConfigured()) return;
+    if (!initSupabase()) return;
+    if (!_supabaseClient) return;
   } catch (e) { return; }
   const config = getSyncConfig();
   setSyncIndicator('syncing');
@@ -1094,7 +1106,10 @@ function autoPullOnStart() {
         setSyncIndicator('synced');
         showToast('已同步云端数据');
       } else { setSyncIndicator('synced'); }
-    }).catch(() => setSyncIndicator('error'));
+    }).catch((e) => {
+      console.error('云端拉取失败:', e);
+      setSyncIndicator('error');
+    });
 }
 
 function autoPushOnChange() {
@@ -1109,7 +1124,7 @@ function autoPushOnChange() {
 
 async function syncPush() {
   if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
-  if (!initSupabase()) { showToast('Supabase 连接失败'); return; }
+  if (!initSupabase() || !_supabaseClient) { showToast('Supabase 连接失败，请检查 CDN 是否加载'); return; }
   setSyncIndicator('syncing');
   try { await doPush(); setSyncIndicator('synced'); showToast('数据已上传到云端'); }
   catch (e) { setSyncIndicator('error'); showToast('上传失败：' + (e.message || '网络错误')); }
@@ -1117,7 +1132,7 @@ async function syncPush() {
 
 async function syncPull() {
   if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
-  if (!initSupabase()) { showToast('Supabase 连接失败'); return; }
+  if (!initSupabase() || !_supabaseClient) { showToast('Supabase 连接失败，请检查 CDN 是否加载'); return; }
   setSyncIndicator('syncing');
   const config = getSyncConfig();
   try {
@@ -1135,6 +1150,7 @@ async function doPush() {
     data: { accounts: getAccounts(), records: loadAllRecords() },
     updated_at: new Date().toISOString()
   };
+  if (!_supabaseClient) throw new Error('Supabase 客户端未初始化');
   const { error } = await _supabaseClient.from('sync_data').upsert(payload, { onConflict: 'sync_key' });
   if (error) throw error;
 }

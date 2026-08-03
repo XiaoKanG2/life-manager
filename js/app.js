@@ -1029,8 +1029,10 @@ function updateSyncBadge() {
 
 // 启动时自动拉取
 function autoPullOnStart() {
-    if (!isSyncConfigured()) return;
-    if (!initSupabase()) return;
+    try {
+        if (!isSyncConfigured()) return;
+        if (!initSupabase()) return;
+    } catch (e) { return; }
 
     const config = getSyncConfig();
     setSyncIndicator('syncing');
@@ -1222,4 +1224,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ==================== 启动应用 ====================
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    try {
+        init();
+    } catch (e) {
+        console.error('记账本初始化失败:', e);
+    }
+});

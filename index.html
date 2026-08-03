@@ -47,6 +47,10 @@
                 <div class="budget-detail" id="budgetDetail"></div>
             </div>
 
+            <div class="asset-overview" id="assetOverview">
+                <!-- 动态填充 -->
+            </div>
+
             <div class="section-title">
                 <span>最近账目</span>
                 <span class="section-more" onclick="switchPage('list')">查看全部 ></span>
@@ -115,6 +119,9 @@
             <div class="transaction-list full-list" id="fullList">
                 <!-- 动态填充 -->
             </div>
+            <div class="pagination" id="pagination">
+                <!-- 动态填充 -->
+            </div>
         </div>
 
         <!-- ========== 设置页 ========== -->
@@ -131,6 +138,11 @@
                 <div class="settings-item" onclick="openCategoryModal()">
                     <span class="settings-icon">🏷️</span>
                     <span class="settings-label">分类管理</span>
+                    <span class="settings-arrow">></span>
+                </div>
+                <div class="settings-item" onclick="openAccountModal()">
+                    <span class="settings-icon">🏦</span>
+                    <span class="settings-label">账户管理</span>
                     <span class="settings-arrow">></span>
                 </div>
             </div>
@@ -163,7 +175,7 @@
                 </div>
             </div>
             <div class="app-info">
-                <p>记账本 v1.0.0</p>
+                <p>记账本 v2.0.0</p>
                 <p>PWA 跨平台记账应用</p>
             </div>
         </div>
@@ -227,7 +239,7 @@
                 <div class="modal-header">
                     <span class="modal-close" onclick="closeBudgetModal()">✕</span>
                     <span class="modal-title">设置月度预算</span>
-                    <span class="modal-save" onclick="saveBudget()">保存</span>
+                    <span class="modal-save" onclick="saveBudgetUI()">保存</span>
                 </div>
                 <div class="modal-body">
                     <div class="amount-input-section">
@@ -289,6 +301,27 @@
                         <button class="sync-btn" onclick="syncPull()">📥 从云端下载</button>
                     </div>
                     <p class="modal-hint" id="syncHint">配置后，两台手机即可自动同步数据</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 账户管理弹窗 ========== -->
+        <div class="modal-overlay" id="accountModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="closeAccountModal()">✕</span>
+                    <span class="modal-title">账户管理</span>
+                    <span class="modal-save" onclick="addAccount()">+</span>
+                </div>
+                <div class="modal-body">
+                    <div class="account-manage-list" id="accountManageList">
+                        <!-- 动态填充 -->
+                    </div>
+                    <div class="add-account-row">
+                        <input type="text" id="accountNameInput" placeholder="账户名称（如：工商银行）" maxlength="20">
+                        <input type="number" id="accountBalanceInput" placeholder="余额" step="0.01" inputmode="decimal">
+                        <button class="add-category-btn" onclick="addAccount()">保存</button>
+                    </div>
                 </div>
             </div>
         </div>

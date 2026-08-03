@@ -1,13 +1,186 @@
-/* ========== 记账本 - 核心业务逻辑 ========== */
+/* ========== 记账本 - 核心业务逻辑 v2.0 ========== */
 
-// ==================== 数据管理 ====================
+// ==================== 存储 Keys ====================
 
-const STORAGE_KEY = 'accounting_app_data';
+const META_KEY = 'accounting_app_meta';
+const STORAGE_PREFIX = 'accounting_app_data_';
+const OLD_STORAGE_KEY = 'accounting_app_data';
 const BUDGET_KEY = 'accounting_app_budget';
 const CATEGORY_KEY = 'accounting_app_categories';
+const ACCOUNT_KEY = 'accounting_app_accounts';
 const SYNC_CONFIG_KEY = 'accounting_app_sync_config';
 
-// 默认支出分类
+// ==================== 账户数据层 ====================
+
+function loadAccounts() {
+    const saved = localStorage.getItem(ACCOUNT_KEY);
+    if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+    }
+    return [];
+}
+
+function saveAccounts(accounts) {
+    localStorage.setItem(ACCOUNT_KEY, JSON.stringify(accounts));
+    autoPushOnChange();
+}
+
+function getAccounts() {
+    return loadAccounts();
+}
+
+// ==================== 元数据 ====================
+
+function getMeta() {
+    const saved = localStorage.getItem(META_KEY);
+    if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+    }
+    return { months: [] };
+}
+
+function saveMeta(meta) {
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+}
+
+function addMonthToMeta(monthKey) {
+    const meta = getMeta();
+    if (!meta.months.includes(monthKey)) {
+        meta.months.push(monthKey);
+        meta.months.sort().reverse();
+        saveMeta(meta);
+    }
+}
+
+// 获取有数据的所有月份（倒序）
+function getMonthsWithData() {
+    const meta = getMeta();
+    return meta.months;
+}
+
+// ==================== 交易数据层（按月分片） ====================
+
+function monthKey(year, month) {
+    return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+function getStorageKey(monthKey) {
+    return STORAGE_PREFIX + monthKey;
+}
+
+// 加载指定月份的交易
+function loadTransactionsByMonth(monthKey) {
+    const saved = localStorage.getItem(getStorageKey(monthKey));
+    if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+    }
+    return [];
+}
+
+// 加载所有月份的交易（用于统计、导出）
+function loadAllTransactions() {
+    const months = getMonthsWithData();
+    const all = [];
+    months.forEach(mk => {
+        all.push(...loadTransactionsByMonth(mk));
+    });
+    return all;
+}
+
+// 保存指定月份的交易
+function saveTransactionsByMonth(monthKey, transactions) {
+    if (transactions.length === 0) {
+        localStorage.removeItem(getStorageKey(monthKey));
+        // 从 meta 中移除该月份
+        const meta = getMeta();
+        meta.months = meta.months.filter(m => m !== monthKey);
+        saveMeta(meta);
+    } else {
+        localStorage.setItem(getStorageKey(monthKey), JSON.stringify(transactions));
+        addMonthToMeta(monthKey);
+    }
+}
+
+// 查找交易所在的月份
+function findTransactionMonth(id) {
+    const months = getMonthsWithData();
+    for (const mk of months) {
+        const txns = loadTransactionsByMonth(mk);
+        if (txns.some(t => t.id === id)) return mk;
+    }
+    return null;
+}
+
+// 保存单笔交易（新增时调用）
+function saveSingleTransaction(txn) {
+    const mk = txn.date.substring(0, 7);
+    const txns = loadTransactionsByMonth(mk);
+    txns.push(txn);
+    saveTransactionsByMonth(mk, txns);
+    autoPushOnChange();
+}
+
+// 更新单笔交易（编辑时调用）
+function updateSingleTransaction(txn) {
+    const mk = txn.date.substring(0, 7);
+    const txns = loadTransactionsByMonth(mk);
+    const idx = txns.findIndex(t => t.id === txn.id);
+    if (idx !== -1) {
+        txns[idx] = txn;
+        saveTransactionsByMonth(mk, txns);
+    }
+    autoPushOnChange();
+}
+
+// 删除单笔交易
+function deleteSingleTransaction(id) {
+    const mk = findTransactionMonth(id);
+    if (!mk) return;
+    const txns = loadTransactionsByMonth(mk);
+    const filtered = txns.filter(t => t.id !== id);
+    saveTransactionsByMonth(mk, filtered);
+    autoPushOnChange();
+}
+
+// ==================== 数据迁移 ====================
+
+function migrateOldData() {
+    const oldData = localStorage.getItem(OLD_STORAGE_KEY);
+    if (!oldData) return false;
+
+    try {
+        const transactions = JSON.parse(oldData);
+        if (!Array.isArray(transactions) || transactions.length === 0) {
+            localStorage.removeItem(OLD_STORAGE_KEY);
+            return false;
+        }
+
+        // 按月分组
+        const grouped = {};
+        transactions.forEach(t => {
+            const mk = (t.date || '').substring(0, 7);
+            if (!mk) return;
+            if (!grouped[mk]) grouped[mk] = [];
+            grouped[mk].push(t);
+        });
+
+        // 保存到月份分片
+        Object.keys(grouped).forEach(mk => {
+            saveTransactionsByMonth(mk, grouped[mk]);
+        });
+
+        // 删除旧数据
+        localStorage.removeItem(OLD_STORAGE_KEY);
+        console.log('数据迁移完成，共 ' + transactions.length + ' 条记录');
+        return true;
+    } catch (e) {
+        console.error('数据迁移失败:', e);
+        return false;
+    }
+}
+
+// ==================== 分类数据层 ====================
+
 const DEFAULT_EXPENSE_CATEGORIES = [
     { id: 'food', name: '餐饮', emoji: '🍚', icon: 'expense' },
     { id: 'transport', name: '交通', emoji: '🚗', icon: 'expense' },
@@ -21,7 +194,6 @@ const DEFAULT_EXPENSE_CATEGORIES = [
     { id: 'other_expense', name: '其他', emoji: '💸', icon: 'expense' },
 ];
 
-// 默认收入分类
 const DEFAULT_INCOME_CATEGORIES = [
     { id: 'salary', name: '工资', emoji: '💰', icon: 'income' },
     { id: 'bonus', name: '奖金', emoji: '🎁', icon: 'income' },
@@ -52,18 +224,7 @@ function getCategories() {
     return loadCategories();
 }
 
-function loadTransactions() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-    }
-    return [];
-}
-
-function saveTransactions(transactions) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
-    autoPushOnChange();
-}
+// ==================== 预算数据层 ====================
 
 function loadBudget() {
     const saved = localStorage.getItem(BUDGET_KEY);
@@ -81,23 +242,30 @@ function saveBudget(budget) {
 // ==================== 应用状态 ====================
 
 let currentPage = 'home';
-let currentType = 'expense'; // expense | income
+let currentType = 'expense';
 let selectedCategoryId = null;
 let editingTransactionId = null;
 let statsType = 'expense';
 let statsYear, statsMonth;
 let listYear, listMonth;
 let listFilter = 'all';
+let listPage = 1;
+const LIST_PAGE_SIZE = 20;
 let categoryManageType = 'expense';
+let accountManageEditId = null;
 
 // ==================== 初始化 ====================
 
 function init() {
+    // 迁移旧数据
+    migrateOldData();
+
     const now = new Date();
     statsYear = now.getFullYear();
     statsMonth = now.getMonth() + 1;
     listYear = now.getFullYear();
     listMonth = now.getMonth() + 1;
+    listPage = 1;
 
     setDefaultCategoryIfEmpty();
     updateAllViews();
@@ -105,7 +273,6 @@ function init() {
     updateSyncBadge();
     registerServiceWorker();
 
-    // 启动时自动从云端拉取数据
     autoPullOnStart();
 }
 
@@ -131,26 +298,21 @@ function updateDateInput() {
 
 function switchPage(page) {
     currentPage = page;
-    // 隐藏所有页面
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    // 显示目标页面
     document.getElementById(`page-${page}`).classList.add('active');
-    // 更新 tab 栏高亮
     document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
     const tabItem = document.querySelector(`.tab-item[data-page="${page}"]`);
     if (tabItem) tabItem.classList.add('active');
 
-    // 页面切换时刷新数据
     if (page === 'home') updateHomeView();
     if (page === 'stats') updateStatsView();
-    if (page === 'list') updateListView();
+    if (page === 'list') { listPage = 1; updateListView(); }
 }
 
 // ==================== 记一笔弹窗 ====================
 
 function openAddModal(transaction) {
     if (transaction) {
-        // 编辑模式
         editingTransactionId = transaction.id;
         currentType = transaction.type;
         selectedCategoryId = transaction.categoryId;
@@ -158,7 +320,6 @@ function openAddModal(transaction) {
         document.getElementById('dateInput').value = transaction.date;
         document.getElementById('noteInput').value = transaction.note || '';
     } else {
-        // 新增模式
         editingTransactionId = null;
         currentType = 'expense';
         selectedCategoryId = null;
@@ -222,7 +383,6 @@ function saveTransaction() {
     const date = document.getElementById('dateInput').value;
     const note = document.getElementById('noteInput').value.trim();
 
-    // 校验
     const amount = parseFloat(amountStr);
     if (!amount || amount <= 0) {
         showToast('请输入有效金额');
@@ -237,31 +397,29 @@ function saveTransaction() {
         return;
     }
 
-    const transactions = loadTransactions();
     const categories = getCategories();
     const allCats = [...categories.expense, ...categories.income];
     const category = allCats.find(c => c.id === selectedCategoryId);
 
     if (editingTransactionId) {
-        // 编辑模式
-        const idx = transactions.findIndex(t => t.id === editingTransactionId);
-        if (idx !== -1) {
-            transactions[idx] = {
-                ...transactions[idx],
-                type: currentType,
-                categoryId: selectedCategoryId,
-                categoryName: category ? category.name : '',
-                categoryEmoji: category ? category.emoji : '',
-                amount: Math.round(amount * 100) / 100,
-                date: date,
-                note: note,
-                updatedAt: Date.now()
-            };
-        }
+        // 编辑：可能跨月，先删除再新增
+        deleteSingleTransaction(editingTransactionId);
+        const txn = {
+            id: editingTransactionId,
+            type: currentType,
+            categoryId: selectedCategoryId,
+            categoryName: category ? category.name : '',
+            categoryEmoji: category ? category.emoji : '',
+            amount: Math.round(amount * 100) / 100,
+            date: date,
+            note: note,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        saveSingleTransaction(txn);
         showToast('修改成功');
     } else {
-        // 新增模式
-        transactions.push({
+        const txn = {
             id: Date.now().toString(),
             type: currentType,
             categoryId: selectedCategoryId,
@@ -271,11 +429,11 @@ function saveTransaction() {
             date: date,
             note: note,
             createdAt: Date.now()
-        });
+        };
+        saveSingleTransaction(txn);
         showToast('记账成功');
     }
 
-    saveTransactions(transactions);
     closeAddModal();
     updateAllViews();
 }
@@ -283,18 +441,21 @@ function saveTransaction() {
 // ==================== 编辑/删除交易 ====================
 
 function editTransaction(id) {
-    const transactions = loadTransactions();
-    const txn = transactions.find(t => t.id === id);
-    if (txn) {
-        openAddModal(txn);
+    // 在所有月份中查找
+    const months = getMonthsWithData();
+    for (const mk of months) {
+        const txns = loadTransactionsByMonth(mk);
+        const txn = txns.find(t => t.id === id);
+        if (txn) {
+            openAddModal(txn);
+            return;
+        }
     }
 }
 
 function deleteTransaction(id) {
     if (confirm('确定要删除这笔账目吗？')) {
-        let transactions = loadTransactions();
-        transactions = transactions.filter(t => t.id !== id);
-        saveTransactions(transactions);
+        deleteSingleTransaction(id);
         showToast('已删除');
         updateAllViews();
     }
@@ -310,11 +471,9 @@ function updateHomeView() {
     document.getElementById('currentMonth').textContent =
         `${year}年${month}月`;
 
-    const transactions = loadTransactions();
+    const mk = monthKey(year, month);
+    const monthTxns = loadTransactionsByMonth(mk);
 
-    // 计算本月收支
-    const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
-    const monthTxns = transactions.filter(t => t.date.startsWith(monthPrefix));
     const monthExpense = monthTxns.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
     const monthIncome = monthTxns.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
     const monthBalance = monthIncome - monthExpense;
@@ -323,28 +482,80 @@ function updateHomeView() {
     document.getElementById('monthIncome').textContent = `¥${monthIncome.toFixed(2)}`;
     document.getElementById('monthBalance').textContent = `¥${monthBalance.toFixed(2)}`;
 
+    // 资产概览
+    updateAssetOverview();
+
     // 预算进度
     updateBudgetSection(monthExpense, year, month);
 
-    // 最近账目
-    const recent = transactions
-        .sort((a, b) => {
-            if (a.date !== b.date) return b.date.localeCompare(a.date);
-            return (b.createdAt || 0) - (a.createdAt || 0);
-        })
-        .slice(0, 8);
-
+    // 最近账目（取所有月份最近的 8 条）
+    const recent = getRecentTransactions(8);
     renderTransactionList('recentList', recent);
+}
+
+function updateAssetOverview() {
+    const container = document.getElementById('assetOverview');
+    if (!container) return;
+
+    const accounts = getAccounts();
+    const totalBalance = accounts.reduce((sum, a) => sum + a.balance, 0);
+
+    if (accounts.length === 0) {
+        container.innerHTML = `
+            <div class="asset-card" onclick="openAccountModal()">
+                <div class="asset-card-header">
+                    <span class="asset-card-title">💰 总资产</span>
+                    <span class="asset-card-add">+ 添加账户</span>
+                </div>
+                <div class="asset-card-balance">¥0.00</div>
+                <div class="asset-card-hint">点击添加你的账户（支付宝、银行卡等）</div>
+            </div>
+        `;
+    } else {
+        const accountItems = accounts.map(a => `
+            <div class="asset-account-item" onclick="event.stopPropagation();openAccountModal('${a.id}')">
+                <span class="asset-account-emoji">${a.emoji || '💳'}</span>
+                <span class="asset-account-name">${a.name}</span>
+                <span class="asset-account-balance">¥${a.balance.toFixed(2)}</span>
+            </div>
+        `).join('');
+
+        container.innerHTML = `
+            <div class="asset-card">
+                <div class="asset-card-header">
+                    <span class="asset-card-title">💰 总资产</span>
+                    <span class="asset-card-add" onclick="openAccountModal()">+ 管理</span>
+                </div>
+                <div class="asset-card-balance">¥${totalBalance.toFixed(2)}</div>
+                <div class="asset-accounts-list">${accountItems}</div>
+            </div>
+        `;
+    }
+}
+
+function getRecentTransactions(limit) {
+    const months = getMonthsWithData();
+    const all = [];
+    for (const mk of months) {
+        all.push(...loadTransactionsByMonth(mk));
+    }
+    all.sort((a, b) => {
+        if (a.date !== b.date) return b.date.localeCompare(a.date);
+        return (b.createdAt || 0) - (a.createdAt || 0);
+    });
+    return all.slice(0, limit);
 }
 
 function updateBudgetSection(monthExpense, year, month) {
     const budgetData = loadBudget();
-    const key = `${year}-${String(month).padStart(2, '0')}`;
+    const key = monthKey(year, month);
     const budget = budgetData[key];
 
     const budgetText = document.getElementById('budgetText');
     const budgetBarFill = document.getElementById('budgetBarFill');
     const budgetDetail = document.getElementById('budgetDetail');
+
+    if (!budgetText) return;
 
     if (budget && budget > 0) {
         budgetText.textContent = `¥${budget.toFixed(2)}`;
@@ -413,16 +624,15 @@ function formatDate(dateStr) {
     return dateStr;
 }
 
-// ==================== 账目列表页 ====================
+// ==================== 账目列表页（分页） ====================
 
 function updateListView() {
     document.getElementById('listMonthLabel').textContent =
         `${listYear}年${listMonth}月`;
 
-    let transactions = loadTransactions();
-    const monthPrefix = `${listYear}-${String(listMonth).padStart(2, '0')}`;
+    const mk = monthKey(listYear, listMonth);
+    let transactions = loadTransactionsByMonth(mk);
 
-    transactions = transactions.filter(t => t.date.startsWith(monthPrefix));
     if (listFilter !== 'all') {
         transactions = transactions.filter(t => t.type === listFilter);
     }
@@ -432,13 +642,52 @@ function updateListView() {
         return (b.createdAt || 0) - (a.createdAt || 0);
     });
 
-    renderTransactionList('fullList', transactions);
+    // 分页
+    const totalCount = transactions.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / LIST_PAGE_SIZE));
+    if (listPage > totalPages) listPage = totalPages;
+
+    const start = (listPage - 1) * LIST_PAGE_SIZE;
+    const pageTxns = transactions.slice(start, start + LIST_PAGE_SIZE);
+
+    renderTransactionList('fullList', pageTxns);
+    updatePagination(totalCount, totalPages);
+}
+
+function updatePagination(totalCount, totalPages) {
+    const container = document.getElementById('pagination');
+    if (!container) return;
+
+    if (totalCount === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = `
+        <button class="page-btn" onclick="goToPage(${listPage - 1})" ${listPage <= 1 ? 'disabled' : ''}>‹ 上一页</button>
+        <span class="page-info">${listPage} / ${totalPages}</span>
+        <button class="page-btn" onclick="goToPage(${listPage + 1})" ${listPage >= totalPages ? 'disabled' : ''}>下一页 ›</button>
+    `;
+}
+
+function goToPage(page) {
+    const mk = monthKey(listYear, listMonth);
+    let transactions = loadTransactionsByMonth(mk);
+    if (listFilter !== 'all') {
+        transactions = transactions.filter(t => t.type === listFilter);
+    }
+    const totalPages = Math.max(1, Math.ceil(transactions.length / LIST_PAGE_SIZE));
+
+    if (page < 1 || page > totalPages) return;
+    listPage = page;
+    updateListView();
 }
 
 function changeListMonth(delta) {
     listMonth += delta;
     if (listMonth > 12) { listMonth = 1; listYear++; }
     if (listMonth < 1) { listMonth = 12; listYear--; }
+    listPage = 1;
     updateListView();
 }
 
@@ -449,6 +698,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
             e.target.classList.add('active');
             listFilter = e.target.dataset.filter;
+            listPage = 1;
             updateListView();
         }
     });
@@ -460,11 +710,8 @@ function updateStatsView() {
     document.getElementById('statsMonthLabel').textContent =
         `${statsYear}年${statsMonth}月`;
 
-    const transactions = loadTransactions();
-    const monthPrefix = `${statsYear}-${String(statsMonth).padStart(2, '0')}`;
-    const monthTxns = transactions.filter(t =>
-        t.date.startsWith(monthPrefix) && t.type === statsType
-    );
+    const mk = monthKey(statsYear, statsMonth);
+    const monthTxns = loadTransactionsByMonth(mk).filter(t => t.type === statsType);
 
     const total = monthTxns.reduce((sum, t) => sum + t.amount, 0);
     const count = monthTxns.length;
@@ -474,7 +721,6 @@ function updateStatsView() {
     document.getElementById('statsCount').textContent = count;
     document.getElementById('statsAvg').textContent = `¥${avg.toFixed(2)}`;
 
-    // 分类统计
     const categoryStats = {};
     monthTxns.forEach(t => {
         const key = t.categoryId || 'other';
@@ -486,14 +732,10 @@ function updateStatsView() {
 
     const sorted = Object.values(categoryStats).sort((a, b) => b.amount - a.amount);
 
-    // 渲染饼图
     renderPieChart(sorted, total);
-    // 渲染柱状图
     renderBarChart(monthTxns);
-    // 渲染分类详情
     renderCategoryDetail(sorted, total);
 
-    // 更新 tabs 样式
     document.querySelectorAll('.stats-tab').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.type === statsType);
     });
@@ -528,11 +770,7 @@ function renderPieChart(sortedData, total) {
     const ctx = canvas.getContext('2d');
     if (pieChartInstance) pieChartInstance.destroy();
 
-    if (sortedData.length === 0) {
-        // 空状态：画一个灰色圆圈
-        canvas.parentElement.querySelector('.chart-title').nextElementSibling?.remove();
-        return;
-    }
+    if (sortedData.length === 0) return;
 
     const colors = [
         '#4A90D9', '#E74C3C', '#2ECC71', '#F39C12', '#9B59B6',
@@ -600,7 +838,6 @@ function renderBarChart(monthTxns) {
     const ctx = canvas.getContext('2d');
     if (barChartInstance) barChartInstance.destroy();
 
-    // 按日汇总
     const dailyStats = {};
     monthTxns.forEach(t => {
         const day = t.date;
@@ -694,10 +931,7 @@ function renderCategoryDetail(sortedData, total) {
 
 function openBudgetModal() {
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-    const key = `${year}-${String(month).padStart(2, '0')}`;
-
+    const key = monthKey(now.getFullYear(), now.getMonth() + 1);
     const budgetData = loadBudget();
     document.getElementById('budgetInput').value = budgetData[key] || '';
     document.getElementById('budgetModal').classList.add('active');
@@ -710,7 +944,7 @@ function closeBudgetModal() {
     document.getElementById('budgetModal').classList.remove('active');
 }
 
-function saveBudget() {
+function saveBudgetUI() {
     const value = parseFloat(document.getElementById('budgetInput').value);
     if (!value || value <= 0) {
         showToast('请输入有效预算金额');
@@ -718,10 +952,7 @@ function saveBudget() {
     }
 
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-    const key = `${year}-${String(month).padStart(2, '0')}`;
-
+    const key = monthKey(now.getFullYear(), now.getMonth() + 1);
     const budgetData = loadBudget();
     budgetData[key] = Math.round(value * 100) / 100;
     saveBudget(budgetData);
@@ -788,7 +1019,7 @@ function deleteCategory(id) {
             cats.splice(idx, 1);
             saveCategories(categories);
             renderCategoryManageList();
-            showToast('分类已删除');
+            showToast('分类已删���');
         }
     }
 }
@@ -822,17 +1053,112 @@ function addCustomCategory() {
     showToast('分类添加成功');
 }
 
+// ==================== 账户管理 ====================
+
+const ACCOUNT_EMOJIS = ['🏦', '💳', '💰', '📱', '🏧', '💼', '🏠', '🐷'];
+
+function openAccountModal(editId) {
+    accountManageEditId = editId || null;
+    const accounts = getAccounts();
+    const container = document.getElementById('accountManageList');
+
+    container.innerHTML = accounts.map(a => `
+        <div class="acct-item">
+            <div class="acct-item-left">
+                <span class="acct-item-emoji">${a.emoji || '💳'}</span>
+                <div>
+                    <div class="acct-item-name">${a.name}</div>
+                    <div class="acct-item-type">${a.type || ''}</div>
+                </div>
+            </div>
+            <div class="acct-item-right">
+                <span class="acct-item-balance">¥${a.balance.toFixed(2)}</span>
+                <span class="acct-item-delete" onclick="event.stopPropagation();deleteAccount('${a.id}')">✕</span>
+            </div>
+        </div>
+    `).join('');
+
+    document.getElementById('accountModal').classList.add('active');
+}
+
+function closeAccountModal() {
+    document.getElementById('accountModal').classList.remove('active');
+    accountManageEditId = null;
+}
+
+function addAccount() {
+    const nameInput = document.getElementById('accountNameInput');
+    const balanceInput = document.getElementById('accountBalanceInput');
+    const name = nameInput.value.trim();
+    const balance = parseFloat(balanceInput.value);
+
+    if (!name) {
+        showToast('请输入账户名称');
+        return;
+    }
+    if (isNaN(balance) || balance < 0) {
+        showToast('请输入有效余额');
+        return;
+    }
+
+    const accounts = getAccounts();
+    const id = accountManageEditId || 'acct_' + Date.now().toString();
+    const rounded = Math.round(balance * 100) / 100;
+
+    if (accountManageEditId) {
+        const idx = accounts.findIndex(a => a.id === id);
+        if (idx !== -1) {
+            accounts[idx].name = name;
+            accounts[idx].balance = rounded;
+            accounts[idx].updatedAt = Date.now();
+        }
+        showToast('账户已更新');
+        accountManageEditId = null;
+    } else {
+        accounts.push({
+            id: id,
+            name: name,
+            balance: rounded,
+            emoji: ACCOUNT_EMOJIS[accounts.length % ACCOUNT_EMOJIS.length],
+            createdAt: Date.now()
+        });
+        showToast('账户添加成功');
+    }
+
+    saveAccounts(accounts);
+    nameInput.value = '';
+    balanceInput.value = '';
+    openAccountModal();
+    updateHomeView();
+}
+
+function deleteAccount(id) {
+    const accounts = getAccounts();
+    const account = accounts.find(a => a.id === id);
+    if (!account) return;
+
+    if (confirm(`确定删除账户「${account.name}」吗？`)) {
+        const filtered = accounts.filter(a => a.id !== id);
+        saveAccounts(filtered);
+        openAccountModal();
+        updateHomeView();
+        showToast('账户已删除');
+    }
+}
+
 // ==================== 数据导入/导出 ====================
 
 function exportData() {
-    const transactions = loadTransactions();
+    const transactions = loadAllTransactions();
+    const accounts = getAccounts();
     const categories = getCategories();
     const budget = loadBudget();
 
     const data = {
-        version: '1.0.0',
+        version: '2.0.0',
         exportedAt: new Date().toISOString(),
         transactions: transactions,
+        accounts: accounts,
         categories: categories,
         budget: budget
     };
@@ -865,21 +1191,43 @@ function handleImport(event) {
                 return;
             }
 
-            if (confirm(`即将导入 ${data.transactions.length} 条记录，是否继续？（会与现有数据合并）`)) {
-                const existing = loadTransactions();
-                const existingIds = new Set(existing.map(t => t.id));
+            if (confirm(`即将导入 ${data.transactions.length} 条记录，是否继续？\n（新格式按月存储，旧格式自动迁移）`)) {
+                // 导入交易（按月分片存储）
+                const existingIds = new Set(loadAllTransactions().map(t => t.id));
                 const newTxns = data.transactions.filter(t => !existingIds.has(t.id));
-                const merged = [...existing, ...newTxns];
-                saveTransactions(merged);
 
+                const grouped = {};
+                newTxns.forEach(t => {
+                    const mk = (t.date || '').substring(0, 7);
+                    if (!mk) return;
+                    if (!grouped[mk]) grouped[mk] = [];
+                    grouped[mk].push(t);
+                });
+
+                Object.keys(grouped).forEach(mk => {
+                    const existing = loadTransactionsByMonth(mk);
+                    const merged = [...existing, ...grouped[mk]];
+                    saveTransactionsByMonth(mk, merged);
+                });
+
+                // 导入预算
                 if (data.budget) {
                     const existingBudget = loadBudget();
                     Object.assign(existingBudget, data.budget);
                     saveBudget(existingBudget);
                 }
 
+                // 导入分类
                 if (data.categories) {
                     saveCategories(data.categories);
+                }
+
+                // 导入账户
+                if (data.accounts && Array.isArray(data.accounts)) {
+                    const existingAccounts = getAccounts();
+                    const existingIds2 = new Set(existingAccounts.map(a => a.id));
+                    const newAccounts = data.accounts.filter(a => !existingIds2.has(a.id));
+                    saveAccounts([...existingAccounts, ...newAccounts]);
                 }
 
                 updateAllViews();
@@ -895,9 +1243,13 @@ function handleImport(event) {
 
 function clearAllData() {
     if (confirm('⚠️ 确定要清空所有记账数据吗？此操作不可恢复！')) {
-        if (confirm('再次确认：真的要删除所有数据��？')) {
-            localStorage.removeItem(STORAGE_KEY);
+        if (confirm('再次确认：真的要删除所有数据吗？')) {
+            // 清除按月分片数据
+            const months = getMonthsWithData();
+            months.forEach(mk => localStorage.removeItem(getStorageKey(mk)));
+            localStorage.removeItem(META_KEY);
             localStorage.removeItem(BUDGET_KEY);
+            localStorage.removeItem(ACCOUNT_KEY);
             updateAllViews();
             autoPushOnChange();
             showToast('所有数据已清空');
@@ -939,7 +1291,7 @@ function registerServiceWorker() {
 
 let _supabaseClient = null;
 let syncDebounceTimer = null;
-const SYNC_DEBOUNCE_MS = 2000; // 2秒防抖，避免频繁推送
+const SYNC_DEBOUNCE_MS = 2000;
 
 function getSyncConfig() {
     const saved = localStorage.getItem(SYNC_CONFIG_KEY);
@@ -972,7 +1324,6 @@ function isSyncConfigured() {
     return !!(config.url && config.key && config.syncKey);
 }
 
-// 打开同步设置弹窗
 function openSyncModal() {
     const config = getSyncConfig();
     document.getElementById('supabaseUrl').value = config.url || '';
@@ -985,7 +1336,6 @@ function closeSyncModal() {
     document.getElementById('syncModal').classList.remove('active');
 }
 
-// 保存同步配置
 function saveSyncConfig() {
     const url = document.getElementById('supabaseUrl').value.trim();
     const key = document.getElementById('supabaseKey').value.trim();
@@ -1003,14 +1353,12 @@ function saveSyncConfig() {
         showToast('同步配置成功');
         updateSyncBadge();
         closeSyncModal();
-        // 首次配置后立即同步
         syncPush();
     } else {
         showToast('Supabase 连接失败，请检查配置');
     }
 }
 
-// 更新同步状态徽章
 function updateSyncBadge() {
     const badge = document.getElementById('syncStatusBadge');
     const indicator = document.getElementById('syncIndicator');
@@ -1027,7 +1375,6 @@ function updateSyncBadge() {
     }
 }
 
-// 启动时自动拉取
 function autoPullOnStart() {
     try {
         if (!isSyncConfigured()) return;
@@ -1060,7 +1407,6 @@ function autoPullOnStart() {
         });
 }
 
-// 变更后自动推送（带防抖）
 function autoPushOnChange() {
     if (!isSyncConfigured()) return;
 
@@ -1076,7 +1422,6 @@ function autoPushOnChange() {
     }, SYNC_DEBOUNCE_MS);
 }
 
-// 手动上传
 async function syncPush() {
     if (!isSyncConfigured()) {
         showToast('请先配置云端同步');
@@ -1098,7 +1443,6 @@ async function syncPush() {
     }
 }
 
-// 手动下载
 async function syncPull() {
     if (!isSyncConfigured()) {
         showToast('请先配置云端同步');
@@ -1135,15 +1479,15 @@ async function syncPull() {
     }
 }
 
-// 核心推送逻辑
 async function doPush() {
     const config = getSyncConfig();
     const payload = {
         sync_key: config.syncKey,
         data: {
-            transactions: loadTransactions(),
+            transactions: loadAllTransactions(),
             budgets: loadBudget(),
-            categories: getCategories()
+            categories: getCategories(),
+            accounts: getAccounts()
         },
         updated_at: new Date().toISOString()
     };
@@ -1155,14 +1499,13 @@ async function doPush() {
     if (error) throw error;
 }
 
-// 合并云端数据到本地（以ID去重，保留更新时间更新的记录）
 function mergeCloudData(cloudData) {
     if (!cloudData || !cloudData.transactions) return;
 
-    const localTxns = loadTransactions();
+    // 合并交易（按月分片）
+    const localTxns = loadAllTransactions();
     const localMap = new Map(localTxns.map(t => [t.id, t]));
 
-    // 云端数据合并到本地
     (cloudData.transactions || []).forEach(ct => {
         const local = localMap.get(ct.id);
         if (!local || (ct.updatedAt && (!local.updatedAt || ct.updatedAt > local.updatedAt))) {
@@ -1170,14 +1513,28 @@ function mergeCloudData(cloudData) {
         }
     });
 
-    // 本地独有的保留
     localTxns.forEach(t => {
         if (!localMap.has(t.id)) localMap.set(t.id, t);
     });
 
     const merged = Array.from(localMap.values());
-    // 直接写 localStorage 避免触发 autoPushOnChange
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    // 按月分片存储
+    const grouped = {};
+    merged.forEach(t => {
+        const mk = (t.date || '').substring(0, 7);
+        if (!mk) return;
+        if (!grouped[mk]) grouped[mk] = [];
+        grouped[mk].push(t);
+    });
+
+    // 清除现有月份数据
+    const existingMonths = getMonthsWithData();
+    existingMonths.forEach(mk => localStorage.removeItem(getStorageKey(mk)));
+
+    // 写入新数据
+    Object.keys(grouped).forEach(mk => {
+        saveTransactionsByMonth(mk, grouped[mk]);
+    });
 
     // 合并预算
     if (cloudData.budgets) {
@@ -1190,7 +1547,6 @@ function mergeCloudData(cloudData) {
     if (cloudData.categories) {
         const localCats = getCategories();
         const cloudCats = cloudData.categories;
-        // 保留本地分类中云端没有的
         ['expense', 'income'].forEach(type => {
             if (cloudCats[type] && localCats[type]) {
                 const cloudIds = new Set(cloudCats[type].map(c => c.id));
@@ -1200,16 +1556,29 @@ function mergeCloudData(cloudData) {
         });
         localStorage.setItem(CATEGORY_KEY, JSON.stringify(cloudCats));
     }
+
+    // 合并账户
+    if (cloudData.accounts && Array.isArray(cloudData.accounts)) {
+        const localAccounts = getAccounts();
+        const localMap2 = new Map(localAccounts.map(a => [a.id, a]));
+        const cloudAccounts = cloudData.accounts;
+        cloudAccounts.forEach(ca => {
+            const local = localMap2.get(ca.id);
+            if (!local || (ca.updatedAt && (!local.updatedAt || ca.updatedAt > local.updatedAt))) {
+                localMap2.set(ca.id, ca);
+            }
+        });
+        localStorage.setItem(ACCOUNT_KEY, JSON.stringify(Array.from(localMap2.values())));
+    }
 }
 
-// 设置同步图标状态
 function setSyncIndicator(state) {
     const indicator = document.getElementById('syncIndicator');
     if (!indicator) return;
     indicator.className = 'sync-indicator ' + state;
 }
 
-// ==================== 点击弹窗遮罩关闭 ====================
+// ==================== 弹窗遮罩关闭 ====================
 
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.modal-overlay').forEach(overlay => {

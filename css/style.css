@@ -1052,3 +1052,212 @@ input, button {
     background: var(--primary);
     color: #fff;
 }
+
+/* ========== 资产概览卡片 ========== */
+.asset-overview {
+    margin: 12px 16px;
+}
+
+.asset-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    transition: transform 0.15s;
+}
+
+.asset-card:active {
+    transform: scale(0.98);
+}
+
+.asset-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.asset-card-title {
+    font-size: 14px;
+    font-weight: 500;
+    opacity: 0.9;
+}
+
+.asset-card-add {
+    font-size: 12px;
+    opacity: 0.8;
+    padding: 4px 10px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+.asset-card-balance {
+    font-size: 32px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    letter-spacing: 1px;
+}
+
+.asset-card-hint {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.asset-accounts-list {
+    border-top: 1px solid rgba(255,255,255,0.2);
+    padding-top: 10px;
+}
+
+.asset-account-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 0;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 8px 8px;
+    margin: 0 -8px;
+    transition: background 0.15s;
+}
+
+.asset-account-item:active {
+    background: rgba(255,255,255,0.15);
+}
+
+.asset-account-emoji {
+    margin-right: 8px;
+    font-size: 20px;
+}
+
+.asset-account-name {
+    flex: 1;
+    font-weight: 500;
+    opacity: 0.9;
+}
+
+.asset-account-balance {
+    font-weight: 600;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ========== 分页控件 ========== */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 16px 0 24px;
+}
+
+.page-btn {
+    padding: 8px 16px;
+    background: #F0F0F0;
+    border-radius: 20px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text);
+    font-weight: 500;
+    transition: all 0.15s;
+}
+
+.page-btn:active {
+    background: var(--primary);
+    color: #fff;
+}
+
+.page-btn[disabled] {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+.page-info {
+    font-size: 13px;
+    color: var(--text-secondary);
+    min-width: 60px;
+    text-align: center;
+}
+
+/* ========== 账户管理弹窗 ========== */
+.account-manage-list {
+    margin-bottom: 16px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.acct-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: #F9F9F9;
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.acct-item:active {
+    background: #EEE;
+}
+
+.acct-item-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.acct-item-emoji {
+    font-size: 24px;
+}
+
+.acct-item-name {
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.acct-item-type {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.acct-item-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.acct-item-balance {
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.acct-item-delete {
+    color: var(--expense);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.add-account-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.add-account-row input {
+    flex: 1;
+    min-width: 100px;
+    padding: 10px 12px;
+    background: #F5F6FA;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+}
+
+.add-account-row input:first-child {
+    flex: 2;
+}

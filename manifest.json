@@ -1,7 +1,7 @@
 {
-    "name": "记账本 - 个人记账助手",
-    "short_name": "记账本",
-    "description": "一款简洁好用的个人记账应用，支持收支管理、统计报表、预算控制",
+    "name": "资产盘点 - 个人资产管理",
+    "short_name": "资产盘点",
+    "description": "每月资产盘点，记录账户余额变化，折线图跟踪资产趋势",
     "start_url": "./index.html",
     "display": "standalone",
     "background_color": "#F5F6FA",

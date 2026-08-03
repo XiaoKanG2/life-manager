@@ -1,1290 +1,1009 @@
-/* ========== 记账本 - 核心业务逻辑 v2.0 ========== */
+/* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 存储 Keys ====================
-
-const META_KEY = 'accounting_app_meta';
-const STORAGE_PREFIX = 'accounting_app_data_';
-const OLD_STORAGE_KEY = 'accounting_app_data';
-const BUDGET_KEY = 'accounting_app_budget';
-const CATEGORY_KEY = 'accounting_app_categories';
-const ACCOUNT_KEY = 'accounting_app_accounts';
-const SYNC_CONFIG_KEY = 'accounting_app_sync_config';
+const ACCOUNT_KEY = 'asset_accounts';
+const ASSET_PREFIX = 'asset_data_';
+const META_KEY = 'asset_meta';
+const SYNC_CONFIG_KEY = 'asset_sync_config';
 
 // ==================== 账户数据层 ====================
 
+const DEFAULT_ACCOUNT_EMOJIS = ['🏦', '💳', '💰', '📱', '🏧', '💼', '🐷', '💎', '🏠', '🪙'];
+
 function loadAccounts() {
-    const saved = localStorage.getItem(ACCOUNT_KEY);
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-    }
-    return [];
+  const saved = localStorage.getItem(ACCOUNT_KEY);
+  if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+  return [];
 }
 
 function saveAccounts(accounts) {
-    localStorage.setItem(ACCOUNT_KEY, JSON.stringify(accounts));
-    autoPushOnChange();
+  localStorage.setItem(ACCOUNT_KEY, JSON.stringify(accounts));
+  autoPushOnChange();
 }
 
-function getAccounts() {
-    return loadAccounts();
-}
+function getAccounts() { return loadAccounts(); }
 
 // ==================== 元数据 ====================
 
 function getMeta() {
-    const saved = localStorage.getItem(META_KEY);
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-    }
-    return { months: [] };
+  const saved = localStorage.getItem(META_KEY);
+  if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+  return { months: [] };
 }
 
-function saveMeta(meta) {
-    localStorage.setItem(META_KEY, JSON.stringify(meta));
+function saveMeta(meta) { localStorage.setItem(META_KEY, JSON.stringify(meta)); }
+
+function addMonthToMeta(mk) {
+  const meta = getMeta();
+  if (!meta.months.includes(mk)) {
+    meta.months.push(mk);
+    meta.months.sort().reverse();
+    saveMeta(meta);
+  }
 }
 
-function addMonthToMeta(monthKey) {
+function getMonthsWithData() { return getMeta().months; }
+function monthKey(y, m) { return `${y}-${String(m).padStart(2, '0')}`; }
+function storageKey(mk) { return ASSET_PREFIX + mk; }
+
+// ==================== 盘点记录数据层 ====================
+
+function loadRecordsByMonth(mk) {
+  const saved = localStorage.getItem(storageKey(mk));
+  if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+  return [];
+}
+
+function saveRecordsByMonth(mk, records) {
+  if (records.length === 0) {
+    localStorage.removeItem(storageKey(mk));
     const meta = getMeta();
-    if (!meta.months.includes(monthKey)) {
-        meta.months.push(monthKey);
-        meta.months.sort().reverse();
-        saveMeta(meta);
+    meta.months = meta.months.filter(m => m !== mk);
+    saveMeta(meta);
+  } else {
+    localStorage.setItem(storageKey(mk), JSON.stringify(records));
+    addMonthToMeta(mk);
+  }
+}
+
+function loadAllRecords() {
+  const all = [];
+  getMonthsWithData().forEach(mk => {
+    all.push(...loadRecordsByMonth(mk));
+  });
+  return all;
+}
+
+function saveRecord(record) {
+  const mk = record.date.substring(0, 7);
+  const records = loadRecordsByMonth(mk);
+  const idx = records.findIndex(r => r.id === record.id);
+  if (idx >= 0) records[idx] = record;
+  else records.push(record);
+  records.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  saveRecordsByMonth(mk, records);
+  autoPushOnChange();
+}
+
+function deleteRecord(id) {
+  const records = loadAllRecords();
+  const record = records.find(r => r.id === id);
+  if (!record) return;
+  const mk = record.date.substring(0, 7);
+  const monthRecords = loadRecordsByMonth(mk);
+  saveRecordsByMonth(mk, monthRecords.filter(r => r.id !== id));
+  autoPushOnChange();
+}
+
+// 获取每个账户的最新余额（从最近一次盘点的记录中取）
+function getLatestBalances() {
+  const records = loadAllRecords();
+  if (records.length === 0) return {};
+  // 按日期降序排
+  records.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  const latest = records[0];
+  return latest.balances || {};
+}
+
+// 获取指定月份的盘点记录（按日期排序）
+function getMonthRecords(year, month) {
+  const mk = monthKey(year, month);
+  return loadRecordsByMonth(mk).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// 获取指定年的所有记录
+function getYearRecords(year) {
+  const records = loadAllRecords();
+  return records.filter(r => r.date.startsWith(`${year}-`)).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// 按年获取每月最后一条记录（用于年视图折线图）
+function getMonthlySnapshots(year) {
+  const yearRecords = getYearRecords(year);
+  const snapshots = {};
+  yearRecords.forEach(r => {
+    const m = r.date.substring(5, 7); // MM
+    // 保留该月最晚的记录
+    if (!snapshots[m] || r.date > snapshots[m].date || (r.date === snapshots[m].date && (r.createdAt || 0) > (snapshots[m].createdAt || 0))) {
+      snapshots[m] = r;
     }
+  });
+  // 返回按月份排序的数组
+  return Object.keys(snapshots).sort().map(m => snapshots[m]);
 }
 
-// 获取有数据的所有月份（倒序）
-function getMonthsWithData() {
-    const meta = getMeta();
-    return meta.months;
+// 获取账户的完整余额时间线（用于折线图）
+function getAccountTimeline(accountId) {
+  const records = loadAllRecords();
+  records.sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
+  return records
+    .filter(r => r.balances && r.balances[accountId] !== undefined)
+    .map(r => ({ date: r.date, balance: r.balances[accountId] }));
 }
 
-// ==================== 交易数据层（按月分片） ====================
-
-function monthKey(year, month) {
-    return `${year}-${String(month).padStart(2, '0')}`;
-}
-
-function getStorageKey(monthKey) {
-    return STORAGE_PREFIX + monthKey;
-}
-
-// 加载指定月份的交易
-function loadTransactionsByMonth(monthKey) {
-    const saved = localStorage.getItem(getStorageKey(monthKey));
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-    }
-    return [];
-}
-
-// 加载所有月份的交易（用于统计、导出）
-function loadAllTransactions() {
-    const months = getMonthsWithData();
-    const all = [];
-    months.forEach(mk => {
-        all.push(...loadTransactionsByMonth(mk));
+// 获取总资产时间线（所有账户余额求和）
+function getTotalAssetTimeline() {
+  const accounts = getAccounts();
+  if (accounts.length === 0) return [];
+  const accountIds = accounts.map(a => a.id);
+  const records = loadAllRecords();
+  records.sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
+  return records
+    .filter(r => r.balances && accountIds.some(id => r.balances[id] !== undefined))
+    .map(r => {
+      let total = 0;
+      accountIds.forEach(id => { if (r.balances[id] !== undefined) total += r.balances[id]; });
+      return { date: r.date, balance: total };
     });
-    return all;
-}
-
-// 保存指定月份的交易
-function saveTransactionsByMonth(monthKey, transactions) {
-    if (transactions.length === 0) {
-        localStorage.removeItem(getStorageKey(monthKey));
-        // 从 meta 中移除该月份
-        const meta = getMeta();
-        meta.months = meta.months.filter(m => m !== monthKey);
-        saveMeta(meta);
-    } else {
-        localStorage.setItem(getStorageKey(monthKey), JSON.stringify(transactions));
-        addMonthToMeta(monthKey);
-    }
-}
-
-// 查找交易所在的月份
-function findTransactionMonth(id) {
-    const months = getMonthsWithData();
-    for (const mk of months) {
-        const txns = loadTransactionsByMonth(mk);
-        if (txns.some(t => t.id === id)) return mk;
-    }
-    return null;
-}
-
-// 保存单笔交易（新增时调用）
-function saveSingleTransaction(txn) {
-    const mk = txn.date.substring(0, 7);
-    const txns = loadTransactionsByMonth(mk);
-    txns.push(txn);
-    saveTransactionsByMonth(mk, txns);
-    autoPushOnChange();
-}
-
-// 更新单笔交易（编辑时调用）
-function updateSingleTransaction(txn) {
-    const mk = txn.date.substring(0, 7);
-    const txns = loadTransactionsByMonth(mk);
-    const idx = txns.findIndex(t => t.id === txn.id);
-    if (idx !== -1) {
-        txns[idx] = txn;
-        saveTransactionsByMonth(mk, txns);
-    }
-    autoPushOnChange();
-}
-
-// 删除单笔交易
-function deleteSingleTransaction(id) {
-    const mk = findTransactionMonth(id);
-    if (!mk) return;
-    const txns = loadTransactionsByMonth(mk);
-    const filtered = txns.filter(t => t.id !== id);
-    saveTransactionsByMonth(mk, filtered);
-    autoPushOnChange();
 }
 
 // ==================== 数据迁移 ====================
 
 function migrateOldData() {
-    const oldData = localStorage.getItem(OLD_STORAGE_KEY);
-    if (!oldData) return false;
+  // v1 记账本数据 → 清空（不同产品逻辑）
+  const oldMetaKey = 'accounting_app_meta';
+  const oldDataPrefix = 'accounting_app_data_';
+  const oldBudget = 'accounting_app_budget';
+  const oldCategory = 'accounting_app_categories';
+  const oldAccountKey = 'accounting_app_accounts';
+  const oldSync = 'accounting_app_sync_config';
 
+  // 迁移账户数据
+  const oldAccounts = localStorage.getItem(oldAccountKey);
+  if (oldAccounts && !localStorage.getItem(ACCOUNT_KEY)) {
     try {
-        const transactions = JSON.parse(oldData);
-        if (!Array.isArray(transactions) || transactions.length === 0) {
-            localStorage.removeItem(OLD_STORAGE_KEY);
-            return false;
-        }
+      const accounts = JSON.parse(oldAccounts);
+      // 去掉 balance 字段（旧版数据），只保留 id/name/emoji
+      const cleaned = accounts.map(a => ({ id: a.id, name: a.name, emoji: a.emoji || DEFAULT_ACCOUNT_EMOJIS[0], createdAt: a.createdAt || Date.now() }));
+      localStorage.setItem(ACCOUNT_KEY, JSON.stringify(cleaned));
+    } catch (e) {}
+  }
 
-        // 按月分组
-        const grouped = {};
-        transactions.forEach(t => {
-            const mk = (t.date || '').substring(0, 7);
-            if (!mk) return;
-            if (!grouped[mk]) grouped[mk] = [];
-            grouped[mk].push(t);
-        });
+  // 迁移同步配置
+  const oldSyncConfig = localStorage.getItem(oldSync);
+  if (oldSyncConfig && !localStorage.getItem(SYNC_CONFIG_KEY)) {
+    localStorage.setItem(SYNC_CONFIG_KEY, oldSyncConfig);
+  }
 
-        // 保存到月份分片
-        Object.keys(grouped).forEach(mk => {
-            saveTransactionsByMonth(mk, grouped[mk]);
-        });
-
-        // 删除旧数据
-        localStorage.removeItem(OLD_STORAGE_KEY);
-        console.log('数据迁移完成，共 ' + transactions.length + ' 条记录');
-        return true;
-    } catch (e) {
-        console.error('数据迁移失败:', e);
-        return false;
-    }
-}
-
-// ==================== 分类数据层 ====================
-
-const DEFAULT_EXPENSE_CATEGORIES = [
-    { id: 'food', name: '餐饮', emoji: '🍚', icon: 'expense' },
-    { id: 'transport', name: '交通', emoji: '🚗', icon: 'expense' },
-    { id: 'shopping', name: '购物', emoji: '🛒', icon: 'expense' },
-    { id: 'entertainment', name: '娱乐', emoji: '🎮', icon: 'expense' },
-    { id: 'housing', name: '居住', emoji: '🏠', icon: 'expense' },
-    { id: 'communication', name: '通讯', emoji: '📱', icon: 'expense' },
-    { id: 'medical', name: '医疗', emoji: '💊', icon: 'expense' },
-    { id: 'education', name: '教育', emoji: '📚', icon: 'expense' },
-    { id: 'daily', name: '日用', emoji: '🧴', icon: 'expense' },
-    { id: 'other_expense', name: '其他', emoji: '💸', icon: 'expense' },
-];
-
-const DEFAULT_INCOME_CATEGORIES = [
-    { id: 'salary', name: '工资', emoji: '💰', icon: 'income' },
-    { id: 'bonus', name: '奖金', emoji: '🎁', icon: 'income' },
-    { id: 'investment', name: '投资', emoji: '📈', icon: 'income' },
-    { id: 'parttime', name: '兼职', emoji: '💼', icon: 'income' },
-    { id: 'redpacket', name: '红包', emoji: '🧧', icon: 'income' },
-    { id: 'refund', name: '退款', emoji: '↩️', icon: 'income' },
-    { id: 'other_income', name: '其他', emoji: '💵', icon: 'income' },
-];
-
-function loadCategories() {
-    const saved = localStorage.getItem(CATEGORY_KEY);
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-    }
-    return {
-        expense: [...DEFAULT_EXPENSE_CATEGORIES],
-        income: [...DEFAULT_INCOME_CATEGORIES]
-    };
-}
-
-function saveCategories(categories) {
-    localStorage.setItem(CATEGORY_KEY, JSON.stringify(categories));
-    autoPushOnChange();
-}
-
-function getCategories() {
-    return loadCategories();
-}
-
-// ==================== 预算数据层 ====================
-
-function loadBudget() {
-    const saved = localStorage.getItem(BUDGET_KEY);
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-    }
-    return {};
-}
-
-function saveBudget(budget) {
-    localStorage.setItem(BUDGET_KEY, JSON.stringify(budget));
-    autoPushOnChange();
+  // 清理旧数据（不删除，用户可能还想用旧版）
+  // localStorage.removeItem(oldMetaKey);
+  // localStorage.removeItem(oldBudget);
+  // localStorage.removeItem(oldCategory);
 }
 
 // ==================== 应用状态 ====================
 
 let currentPage = 'home';
-let currentType = 'expense';
-let selectedCategoryId = null;
-let editingTransactionId = null;
-let statsType = 'expense';
+let statsAccountId = null; // 统计页选中的账户
+let statsMode = 'month'; // 'month' | 'year'
 let statsYear, statsMonth;
-let listYear, listMonth;
-let listFilter = 'all';
-let listPage = 1;
-const LIST_PAGE_SIZE = 20;
-let categoryManageType = 'expense';
-let accountManageEditId = null;
 
 // ==================== 初始化 ====================
 
 function init() {
-    // 迁移旧数据
+  try {
     migrateOldData();
-
     const now = new Date();
     statsYear = now.getFullYear();
     statsMonth = now.getMonth() + 1;
-    listYear = now.getFullYear();
-    listMonth = now.getMonth() + 1;
-    listPage = 1;
-
-    setDefaultCategoryIfEmpty();
+    // 默认选中第一个账户用于统计
+    const accounts = getAccounts();
+    if (accounts.length > 0 && !statsAccountId) statsAccountId = accounts[0].id;
     updateAllViews();
-    updateDateInput();
     updateSyncBadge();
     registerServiceWorker();
-
     autoPullOnStart();
-}
-
-function setDefaultCategoryIfEmpty() {
-    const categories = getCategories();
-    if (!categories.expense || categories.expense.length === 0) {
-        categories.expense = [...DEFAULT_EXPENSE_CATEGORIES];
-    }
-    if (!categories.income || categories.income.length === 0) {
-        categories.income = [...DEFAULT_INCOME_CATEGORIES];
-    }
-}
-
-function updateDateInput() {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    document.getElementById('dateInput').value = `${y}-${m}-${d}`;
+  } catch (e) {
+    console.error('初始化失败:', e);
+  }
 }
 
 // ==================== 页面导航 ====================
 
 function switchPage(page) {
-    currentPage = page;
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById(`page-${page}`).classList.add('active');
-    document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
-    const tabItem = document.querySelector(`.tab-item[data-page="${page}"]`);
-    if (tabItem) tabItem.classList.add('active');
+  currentPage = page;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const pageEl = document.getElementById(`page-${page}`);
+  if (pageEl) pageEl.classList.add('active');
+  document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  const tabItem = document.querySelector(`.tab-item[data-page="${page}"]`);
+  if (tabItem) tabItem.classList.add('active');
 
-    if (page === 'home') updateHomeView();
-    if (page === 'stats') updateStatsView();
-    if (page === 'list') { listPage = 1; updateListView(); }
-}
-
-// ==================== 记一笔弹窗 ====================
-
-function openAddModal(transaction) {
-    if (transaction) {
-        editingTransactionId = transaction.id;
-        currentType = transaction.type;
-        selectedCategoryId = transaction.categoryId;
-        document.getElementById('amountInput').value = transaction.amount;
-        document.getElementById('dateInput').value = transaction.date;
-        document.getElementById('noteInput').value = transaction.note || '';
-    } else {
-        editingTransactionId = null;
-        currentType = 'expense';
-        selectedCategoryId = null;
-        document.getElementById('amountInput').value = '';
-        document.getElementById('noteInput').value = '';
-        updateDateInput();
-    }
-
-    updateTypeSwitch();
-    renderCategoryGrid();
-    document.getElementById('addModal').classList.add('active');
-    setTimeout(() => {
-        document.getElementById('amountInput').focus();
-    }, 350);
-}
-
-function closeAddModal() {
-    document.getElementById('addModal').classList.remove('active');
-    editingTransactionId = null;
-}
-
-function switchType(type) {
-    currentType = type;
-    selectedCategoryId = null;
-    updateTypeSwitch();
-    renderCategoryGrid();
-}
-
-function updateTypeSwitch() {
-    const buttons = document.querySelectorAll('.type-btn');
-    buttons.forEach(btn => {
-        btn.classList.remove('active', 'expense-active', 'income-active');
-        if (btn.dataset.type === currentType) {
-            btn.classList.add('active');
-            btn.classList.add(currentType === 'expense' ? 'expense-active' : 'income-active');
-        }
-    });
-}
-
-function renderCategoryGrid() {
-    const grid = document.getElementById('categoryGrid');
-    const categories = getCategories();
-    const cats = currentType === 'expense' ? categories.expense : categories.income;
-
-    grid.innerHTML = cats.map(cat => `
-        <div class="cat-item ${cat.id === selectedCategoryId ? 'selected' : ''}"
-             onclick="selectCategory('${cat.id}')">
-            <span class="cat-emoji">${cat.emoji}</span>
-            <span class="cat-name">${cat.name}</span>
-        </div>
-    `).join('');
-}
-
-function selectCategory(id) {
-    selectedCategoryId = id;
-    renderCategoryGrid();
-}
-
-function saveTransaction() {
-    const amountStr = document.getElementById('amountInput').value;
-    const date = document.getElementById('dateInput').value;
-    const note = document.getElementById('noteInput').value.trim();
-
-    const amount = parseFloat(amountStr);
-    if (!amount || amount <= 0) {
-        showToast('请输入有效金额');
-        return;
-    }
-    if (!selectedCategoryId) {
-        showToast('请选择分类');
-        return;
-    }
-    if (!date) {
-        showToast('请选择日期');
-        return;
-    }
-
-    const categories = getCategories();
-    const allCats = [...categories.expense, ...categories.income];
-    const category = allCats.find(c => c.id === selectedCategoryId);
-
-    if (editingTransactionId) {
-        // 编辑：可能跨月，先删除再新增
-        deleteSingleTransaction(editingTransactionId);
-        const txn = {
-            id: editingTransactionId,
-            type: currentType,
-            categoryId: selectedCategoryId,
-            categoryName: category ? category.name : '',
-            categoryEmoji: category ? category.emoji : '',
-            amount: Math.round(amount * 100) / 100,
-            date: date,
-            note: note,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-        };
-        saveSingleTransaction(txn);
-        showToast('修改成功');
-    } else {
-        const txn = {
-            id: Date.now().toString(),
-            type: currentType,
-            categoryId: selectedCategoryId,
-            categoryName: category ? category.name : '',
-            categoryEmoji: category ? category.emoji : '',
-            amount: Math.round(amount * 100) / 100,
-            date: date,
-            note: note,
-            createdAt: Date.now()
-        };
-        saveSingleTransaction(txn);
-        showToast('记账成功');
-    }
-
-    closeAddModal();
-    updateAllViews();
-}
-
-// ==================== 编辑/删除交易 ====================
-
-function editTransaction(id) {
-    // 在所有月份中查找
-    const months = getMonthsWithData();
-    for (const mk of months) {
-        const txns = loadTransactionsByMonth(mk);
-        const txn = txns.find(t => t.id === id);
-        if (txn) {
-            openAddModal(txn);
-            return;
-        }
-    }
-}
-
-function deleteTransaction(id) {
-    if (confirm('确定要删除这笔账目吗？')) {
-        deleteSingleTransaction(id);
-        showToast('已删除');
-        updateAllViews();
-    }
+  if (page === 'home') updateHomeView();
+  if (page === 'stats') updateStatsView();
 }
 
 // ==================== 首页视图 ====================
 
 function updateHomeView() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  document.getElementById('currentMonth').textContent = `${year}年${month}月`;
 
-    document.getElementById('currentMonth').textContent =
-        `${year}年${month}月`;
+  const accounts = getAccounts();
+  const balances = getLatestBalances();
+  const totalAssets = Object.values(balances).reduce((sum, v) => sum + v, 0);
 
-    const mk = monthKey(year, month);
-    const monthTxns = loadTransactionsByMonth(mk);
-
-    const monthExpense = monthTxns.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-    const monthIncome = monthTxns.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-    const monthBalance = monthIncome - monthExpense;
-
-    document.getElementById('monthExpense').textContent = `¥${monthExpense.toFixed(2)}`;
-    document.getElementById('monthIncome').textContent = `¥${monthIncome.toFixed(2)}`;
-    document.getElementById('monthBalance').textContent = `¥${monthBalance.toFixed(2)}`;
-
-    // 资产概览
-    updateAssetOverview();
-
-    // 预算进度
-    updateBudgetSection(monthExpense, year, month);
-
-    // 最近账目（取所有月份最近的 8 条）
-    const recent = getRecentTransactions(8);
-    renderTransactionList('recentList', recent);
-}
-
-function updateAssetOverview() {
-    const container = document.getElementById('assetOverview');
-    if (!container) return;
-
-    const accounts = getAccounts();
-    const totalBalance = accounts.reduce((sum, a) => sum + a.balance, 0);
-
-    if (accounts.length === 0) {
-        container.innerHTML = `
-            <div class="asset-card" onclick="openAccountModal()">
-                <div class="asset-card-header">
-                    <span class="asset-card-title">💰 总资产</span>
-                    <span class="asset-card-add">+ 添加账户</span>
-                </div>
-                <div class="asset-card-balance">¥0.00</div>
-                <div class="asset-card-hint">点击添加你的账户（支付宝、银行卡等）</div>
-            </div>
-        `;
-    } else {
-        const accountItems = accounts.map(a => `
-            <div class="asset-account-item" onclick="event.stopPropagation();openAccountModal('${a.id}')">
-                <span class="asset-account-emoji">${a.emoji || '💳'}</span>
-                <span class="asset-account-name">${a.name}</span>
-                <span class="asset-account-balance">¥${a.balance.toFixed(2)}</span>
-            </div>
-        `).join('');
-
-        container.innerHTML = `
-            <div class="asset-card">
-                <div class="asset-card-header">
-                    <span class="asset-card-title">💰 总资产</span>
-                    <span class="asset-card-add" onclick="openAccountModal()">+ 管理</span>
-                </div>
-                <div class="asset-card-balance">¥${totalBalance.toFixed(2)}</div>
-                <div class="asset-accounts-list">${accountItems}</div>
-            </div>
-        `;
-    }
-}
-
-function getRecentTransactions(limit) {
-    const months = getMonthsWithData();
-    const all = [];
-    for (const mk of months) {
-        all.push(...loadTransactionsByMonth(mk));
-    }
-    all.sort((a, b) => {
-        if (a.date !== b.date) return b.date.localeCompare(a.date);
-        return (b.createdAt || 0) - (a.createdAt || 0);
-    });
-    return all.slice(0, limit);
-}
-
-function updateBudgetSection(monthExpense, year, month) {
-    const budgetData = loadBudget();
-    const key = monthKey(year, month);
-    const budget = budgetData[key];
-
-    const budgetText = document.getElementById('budgetText');
-    const budgetBarFill = document.getElementById('budgetBarFill');
-    const budgetDetail = document.getElementById('budgetDetail');
-
-    if (!budgetText) return;
-
-    if (budget && budget > 0) {
-        budgetText.textContent = `¥${budget.toFixed(2)}`;
-        const percent = Math.min((monthExpense / budget) * 100, 100);
-        budgetBarFill.style.width = percent + '%';
-
-        const remaining = budget - monthExpense;
-        if (remaining < 0) {
-            budgetBarFill.style.background = '#E74C3C';
-            budgetDetail.className = 'budget-detail warning';
-            budgetDetail.textContent = `⚠️ 已超支 ¥${Math.abs(remaining).toFixed(2)}`;
-        } else if (percent > 80) {
-            budgetBarFill.style.background = '#F39C12';
-            budgetDetail.className = 'budget-detail warning';
-            budgetDetail.textContent = `剩余 ¥${remaining.toFixed(2)} · 已用 ${percent.toFixed(0)}%`;
-        } else {
-            budgetBarFill.style.background = 'linear-gradient(90deg, #2ECC71, #4A90D9)';
-            budgetDetail.className = 'budget-detail';
-            budgetDetail.textContent = `剩余 ¥${remaining.toFixed(2)} · 已用 ${percent.toFixed(0)}%`;
-        }
-    } else {
-        budgetText.textContent = '未设置';
-        budgetBarFill.style.width = '0%';
-        budgetDetail.className = 'budget-detail';
-        budgetDetail.textContent = '点击设置 → 去设置月度预算';
-    }
-}
-
-// ==================== 交易列表渲染 ====================
-
-function renderTransactionList(containerId, transactions) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    if (transactions.length === 0) {
-        container.innerHTML = `
-            <div class="empty-transactions">
-                <div class="empty-icon">📝</div>
-                <p class="empty-text">暂无账目记录</p>
-                <p style="font-size:12px;color:#BBB;margin-top:4px;">点击下方 + 开始记账吧</p>
-            </div>
-        `;
-        return;
-    }
-
-    container.innerHTML = transactions.map(t => `
-        <div class="transaction-item" onclick="editTransaction('${t.id}')">
-            <div class="txn-icon ${t.type}">${t.categoryEmoji || (t.type === 'expense' ? '💸' : '💰')}</div>
-            <div class="txn-info">
-                <div class="txn-category">${t.categoryName || (t.type === 'expense' ? '支出' : '收入')}</div>
-                <div class="txn-date">${formatDate(t.date)}${t.note ? ' · ' + t.note : ''}</div>
-            </div>
-            <div class="txn-amount-section">
-                <span class="txn-amount ${t.type}">${t.type === 'expense' ? '-' : '+'}¥${t.amount.toFixed(2)}</span>
-                <span class="txn-delete" onclick="event.stopPropagation();deleteTransaction('${t.id}')">✕</span>
-            </div>
+  // 总资产卡片
+  const assetContainer = document.getElementById('assetOverview');
+  if (accounts.length === 0) {
+    assetContainer.innerHTML = `
+      <div class="asset-card" onclick="switchPage('settings')">
+        <div class="asset-card-header">
+          <span class="asset-card-title">💰 总资产</span>
         </div>
-    `).join('');
+        <div class="asset-card-balance">¥0.00</div>
+        <div class="asset-card-hint">去设置 → 添加账户（支付宝、银行卡等）</div>
+      </div>`;
+  } else {
+    assetContainer.innerHTML = `
+      <div class="asset-card">
+        <div class="asset-card-header">
+          <span class="asset-card-title">💰 总资产</span>
+        </div>
+        <div class="asset-card-balance">¥${totalAssets.toFixed(2)}</div>
+      </div>`;
+  }
+
+  // 账户列表
+  const accountListContainer = document.getElementById('accountList');
+  if (accounts.length === 0) {
+    accountListContainer.innerHTML = `<div class="empty-state"><div class="empty-icon">💳</div><div class="empty-text">还没有账户，去设置添加</div></div>`;
+  } else {
+    accountListContainer.innerHTML = accounts.map(a => {
+      const balance = balances[a.id] !== undefined ? balances[a.id] : 0;
+      return `
+        <div class="acct-row" onclick="openCheckinModal('${a.id}')">
+          <span class="acct-row-emoji">${a.emoji || '💳'}</span>
+          <div class="acct-row-info">
+            <span class="acct-row-name">${a.name}</span>
+            <span class="acct-row-hint">点击盘点</span>
+          </div>
+          <span class="acct-row-balance">¥${balance.toFixed(2)}</span>
+        </div>`;
+    }).join('');
+  }
+
+  // 最近盘点记录
+  const records = loadAllRecords();
+  records.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  renderRecentRecords(records.slice(0, 8), accounts);
 }
 
-function formatDate(dateStr) {
-    const parts = dateStr.split('-');
-    if (parts.length === 3) {
-        return `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+function renderRecentRecords(records, accounts) {
+  const container = document.getElementById('recentRecords');
+  if (!container) return;
+  if (records.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="padding:30px 0"><div class="empty-icon">📋</div><div class="empty-text">暂无盘点记录</div></div>`;
+    return;
+  }
+
+  const nameMap = {};
+  accounts.forEach(a => { nameMap[a.id] = a; });
+
+  container.innerHTML = records.map(r => {
+    const changedAccounts = [];
+    if (r.balances) {
+      Object.keys(r.balances).forEach(aid => {
+        const acc = nameMap[aid];
+        changedAccounts.push(`${acc ? acc.emoji : ''}${acc ? acc.name : aid} ¥${r.balances[aid].toFixed(0)}`);
+      });
     }
-    return dateStr;
+    return `
+      <div class="record-item" onclick="openCheckinModal(null, '${r.id}')">
+        <div class="record-item-left">
+          <span class="record-item-date">${formatDate(r.date)}</span>
+          <span class="record-item-summary">${changedAccounts.slice(0, 3).join(' · ')}${changedAccounts.length > 3 ? ' ...' : ''}</span>
+        </div>
+        <div class="record-item-right">
+          <span class="record-item-note">${r.note || ''}</span>
+          <span class="record-item-delete" onclick="event.stopPropagation();deleteRecordAndRefresh('${r.id}')">✕</span>
+        </div>
+      </div>`;
+  }).join('');
 }
 
-// ==================== 账目列表页（分页） ====================
+// ==================== 盘点弹窗 ====================
 
-function updateListView() {
-    document.getElementById('listMonthLabel').textContent =
-        `${listYear}年${listMonth}月`;
+function openCheckinModal(accountId, recordId) {
+  const accounts = getAccounts();
 
-    const mk = monthKey(listYear, listMonth);
-    let transactions = loadTransactionsByMonth(mk);
+  if (recordId) {
+    // 编辑已有盘点记录
+    const records = loadAllRecords();
+    const record = records.find(r => r.id === recordId);
+    if (!record) return;
+    document.getElementById('checkinDate').value = record.date;
+    document.getElementById('checkinNote').value = record.note || '';
 
-    if (listFilter !== 'all') {
-        transactions = transactions.filter(t => t.type === listFilter);
+    const balanceInputs = document.getElementById('checkinBalances');
+    balanceInputs.innerHTML = accounts.map(a => {
+      const val = (record.balances && record.balances[a.id] !== undefined) ? record.balances[a.id] : '';
+      return `<div class="checkin-account-row">
+        <span class="checkin-acct-emoji">${a.emoji || '💳'}</span>
+        <span class="checkin-acct-name">${a.name}</span>
+        <input type="number" class="checkin-acct-input" data-account-id="${a.id}" placeholder="0.00" step="0.01" inputmode="decimal" value="${val}">
+      </div>`;
+    }).join('');
+
+    document.getElementById('checkinModalTitle').textContent = '编辑盘点';
+    document.getElementById('checkinRecordId').value = recordId;
+    document.getElementById('checkinModal').classList.add('active');
+  } else if (accountId) {
+    // 快速盘点单个账户
+    const account = accounts.find(a => a.id === accountId);
+    if (!account) return;
+
+    // 获取该账户最新余额作为默认值
+    const existingBalances = getLatestBalances();
+    const currentBalance = existingBalances[accountId] !== undefined ? existingBalances[accountId] : 0;
+
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    document.getElementById('checkinDate').value = dateStr;
+    document.getElementById('checkinNote').value = '';
+
+    const balanceInputs = document.getElementById('checkinBalances');
+    balanceInputs.innerHTML = `<div class="checkin-account-row">
+      <span class="checkin-acct-emoji">${account.emoji || '💳'}</span>
+      <span class="checkin-acct-name">${account.name}</span>
+      <input type="number" class="checkin-acct-input" data-account-id="${account.id}" placeholder="0.00" step="0.01" inputmode="decimal" value="${currentBalance}">
+    </div>`;
+
+    document.getElementById('checkinModalTitle').textContent = '资产盘点';
+    document.getElementById('checkinRecordId').value = '';
+    document.getElementById('checkinModal').classList.add('active');
+
+    setTimeout(() => {
+      const input = balanceInputs.querySelector('input');
+      if (input) { input.focus(); input.select(); }
+    }, 350);
+  } else {
+    // 打开完整盘点
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    document.getElementById('checkinDate').value = dateStr;
+    document.getElementById('checkinNote').value = '';
+
+    const existingBalances = getLatestBalances();
+    const balanceInputs = document.getElementById('checkinBalances');
+    balanceInputs.innerHTML = accounts.map(a => {
+      const val = existingBalances[a.id] !== undefined ? existingBalances[a.id] : '';
+      return `<div class="checkin-account-row">
+        <span class="checkin-acct-emoji">${a.emoji || '💳'}</span>
+        <span class="checkin-acct-name">${a.name}</span>
+        <input type="number" class="checkin-acct-input" data-account-id="${a.id}" placeholder="0.00" step="0.01" inputmode="decimal" value="${val}">
+      </div>`;
+    }).join('');
+
+    document.getElementById('checkinModalTitle').textContent = '资产盘点';
+    document.getElementById('checkinRecordId').value = '';
+    document.getElementById('checkinModal').classList.add('active');
+  }
+}
+
+function closeCheckinModal() {
+  document.getElementById('checkinModal').classList.remove('active');
+}
+
+function saveCheckin() {
+  const accounts = getAccounts();
+  if (accounts.length === 0) {
+    showToast('请先添加账户');
+    return;
+  }
+
+  const date = document.getElementById('checkinDate').value;
+  const note = document.getElementById('checkinNote').value.trim();
+  if (!date) { showToast('请选择日期'); return; }
+
+  const balances = {};
+  const inputs = document.getElementById('checkinBalances').querySelectorAll('input');
+  let hasValue = false;
+  inputs.forEach(inp => {
+    const aid = inp.dataset.accountId;
+    const val = parseFloat(inp.value);
+    if (!isNaN(val) && val >= 0) {
+      balances[aid] = Math.round(val * 100) / 100;
+      hasValue = true;
     }
+  });
 
-    transactions.sort((a, b) => {
-        if (a.date !== b.date) return b.date.localeCompare(a.date);
-        return (b.createdAt || 0) - (a.createdAt || 0);
-    });
+  if (!hasValue && Object.keys(balances).length === 0) {
+    showToast('请至少输入一个账户余额');
+    return;
+  }
 
-    // 分页
-    const totalCount = transactions.length;
-    const totalPages = Math.max(1, Math.ceil(totalCount / LIST_PAGE_SIZE));
-    if (listPage > totalPages) listPage = totalPages;
+  const recordId = document.getElementById('checkinRecordId').value;
+  const record = {
+    id: recordId || Date.now().toString(),
+    date: date,
+    balances: balances,
+    note: note,
+    createdAt: Date.now()
+  };
 
-    const start = (listPage - 1) * LIST_PAGE_SIZE;
-    const pageTxns = transactions.slice(start, start + LIST_PAGE_SIZE);
-
-    renderTransactionList('fullList', pageTxns);
-    updatePagination(totalCount, totalPages);
+  saveRecord(record);
+  closeCheckinModal();
+  showToast(recordId ? '盘点已更新' : '盘点完成');
+  updateAllViews();
 }
-
-function updatePagination(totalCount, totalPages) {
-    const container = document.getElementById('pagination');
-    if (!container) return;
-
-    if (totalCount === 0) {
-        container.innerHTML = '';
-        return;
-    }
-
-    container.innerHTML = `
-        <button class="page-btn" onclick="goToPage(${listPage - 1})" ${listPage <= 1 ? 'disabled' : ''}>‹ 上一页</button>
-        <span class="page-info">${listPage} / ${totalPages}</span>
-        <button class="page-btn" onclick="goToPage(${listPage + 1})" ${listPage >= totalPages ? 'disabled' : ''}>下一页 ›</button>
-    `;
-}
-
-function goToPage(page) {
-    const mk = monthKey(listYear, listMonth);
-    let transactions = loadTransactionsByMonth(mk);
-    if (listFilter !== 'all') {
-        transactions = transactions.filter(t => t.type === listFilter);
-    }
-    const totalPages = Math.max(1, Math.ceil(transactions.length / LIST_PAGE_SIZE));
-
-    if (page < 1 || page > totalPages) return;
-    listPage = page;
-    updateListView();
-}
-
-function changeListMonth(delta) {
-    listMonth += delta;
-    if (listMonth > 12) { listMonth = 1; listYear++; }
-    if (listMonth < 1) { listMonth = 12; listYear--; }
-    listPage = 1;
-    updateListView();
-}
-
-// 筛选按钮事件
-document.addEventListener('DOMContentLoaded', () => {
-    document.querySelector('.filter-bar')?.addEventListener('click', (e) => {
-        if (e.target.classList.contains('filter-btn')) {
-            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            listFilter = e.target.dataset.filter;
-            listPage = 1;
-            updateListView();
-        }
-    });
-});
 
 // ==================== 统计页 ====================
 
 function updateStatsView() {
-    document.getElementById('statsMonthLabel').textContent =
-        `${statsYear}年${statsMonth}月`;
+  document.getElementById('statsPeriodLabel').textContent =
+    statsMode === 'month' ? `${statsYear}年${statsMonth}月` : `${statsYear}年`;
 
+  // 总资产折线图
+  renderTotalAssetChart(getTotalAssetTimeline());
+
+  const accounts = getAccounts();
+
+  // 更新账户选择器
+  const selector = document.getElementById('statsAccountSelector');
+  if (selector) {
+    if (accounts.length === 0) {
+      selector.innerHTML = `<div class="empty-state" style="padding:20px 0"><div class="empty-text">请先添加账户</div></div>`;
+    } else {
+      if (!statsAccountId || !accounts.find(a => a.id === statsAccountId)) {
+        statsAccountId = accounts[0].id;
+      }
+      selector.innerHTML = accounts.map(a => `
+        <div class="stats-acct-chip ${a.id === statsAccountId ? 'active' : ''}" onclick="selectStatsAccount('${a.id}')">
+          ${a.emoji || '💳'} ${a.name}
+        </div>`).join('');
+    }
+  }
+
+  if (accounts.length === 0) {
+    document.getElementById('statsGrowthAmount').textContent = '--';
+    document.getElementById('statsChangePercent').textContent = '--';
+    document.getElementById('statsHighest').textContent = '--';
+    document.getElementById('statsLowest').textContent = '--';
+    return;
+  }
+
+  // 获取选中账户的时间线
+  const timeline = getAccountTimeline(statsAccountId);
+  renderLineChart(timeline);
+
+  // 计算统计
+  if (statsMode === 'month') {
     const mk = monthKey(statsYear, statsMonth);
-    const monthTxns = loadTransactionsByMonth(mk).filter(t => t.type === statsType);
+    const monthTimeline = timeline.filter(t => t.date.startsWith(mk));
+    updateStatsSummary(monthTimeline);
 
-    const total = monthTxns.reduce((sum, t) => sum + t.amount, 0);
-    const count = monthTxns.length;
-    const avg = count > 0 ? total / count : 0;
-
-    document.getElementById('statsTotal').textContent = `¥${total.toFixed(2)}`;
-    document.getElementById('statsCount').textContent = count;
-    document.getElementById('statsAvg').textContent = `¥${avg.toFixed(2)}`;
-
-    const categoryStats = {};
-    monthTxns.forEach(t => {
-        const key = t.categoryId || 'other';
-        if (!categoryStats[key]) {
-            categoryStats[key] = { name: t.categoryName || '其他', emoji: t.categoryEmoji || '💸', amount: 0 };
-        }
-        categoryStats[key].amount += t.amount;
-    });
-
-    const sorted = Object.values(categoryStats).sort((a, b) => b.amount - a.amount);
-
-    renderPieChart(sorted, total);
-    renderBarChart(monthTxns);
-    renderCategoryDetail(sorted, total);
-
-    document.querySelectorAll('.stats-tab').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.type === statsType);
-    });
+    // 月内详情
+    const monthRecords = getMonthRecords(statsYear, statsMonth);
+    renderStatsDetail(monthRecords, accounts);
+  } else {
+    // 年视图：取每月最后一条有该账户的记录
+    const yearTimeline = [];
+    for (let m = 1; m <= 12; m++) {
+      const mk = monthKey(statsYear, m);
+      const monthData = timeline.filter(t => t.date.startsWith(mk));
+      if (monthData.length > 0) {
+        yearTimeline.push(monthData[monthData.length - 1]); // 取最后一条
+      }
+    }
+    updateStatsSummary(yearTimeline);
+    const allYearRecords = getYearRecords(statsYear);
+    renderStatsDetail(allYearRecords, accounts);
+  }
 }
 
-function changeStatsMonth(delta) {
+function selectStatsAccount(accountId) {
+  statsAccountId = accountId;
+  updateStatsView();
+}
+
+function changeStatsMode(mode) {
+  statsMode = mode;
+  document.querySelectorAll('.mode-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.mode === mode);
+  });
+  updateStatsView();
+}
+
+function changeStatsPeriod(delta) {
+  if (statsMode === 'month') {
     statsMonth += delta;
     if (statsMonth > 12) { statsMonth = 1; statsYear++; }
     if (statsMonth < 1) { statsMonth = 12; statsYear--; }
-    updateStatsView();
+  } else {
+    statsYear += delta;
+  }
+  updateStatsView();
 }
 
-// 统计页 tabs 事件
-document.addEventListener('DOMContentLoaded', () => {
-    document.querySelector('.stats-tabs')?.addEventListener('click', (e) => {
-        if (e.target.classList.contains('stats-tab')) {
-            statsType = e.target.dataset.type;
-            updateStatsView();
-        }
-    });
-});
+function updateStatsSummary(timeline) {
+  if (timeline.length < 2) {
+    document.getElementById('statsGrowthAmount').textContent = timeline.length > 0 ? '¥0.00' : '--';
+    document.getElementById('statsChangePercent').textContent = timeline.length > 0 ? '0%' : '--';
+    document.getElementById('statsHighest').textContent = timeline.length > 0 ? `¥${Math.max(...timeline.map(t => t.balance)).toFixed(2)}` : '--';
+    document.getElementById('statsLowest').textContent = timeline.length > 0 ? `¥${Math.min(...timeline.map(t => t.balance)).toFixed(2)}` : '--';
+    return;
+  }
 
-// ==================== Chart.js 图表 ====================
+  const first = timeline[0].balance;
+  const last = timeline[timeline.length - 1].balance;
+  const change = last - first;
+  const pct = first !== 0 ? ((change / first) * 100) : 0;
 
-let pieChartInstance = null;
-let barChartInstance = null;
+  const changeEl = document.getElementById('statsGrowthAmount');
+  changeEl.textContent = (change >= 0 ? '+' : '') + '¥' + change.toFixed(2);
+  changeEl.className = 'stats-summary-value ' + (change >= 0 ? 'positive' : 'negative');
 
-function renderPieChart(sortedData, total) {
-    const canvas = document.getElementById('pieChart');
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (pieChartInstance) pieChartInstance.destroy();
-
-    if (sortedData.length === 0) return;
-
-    const colors = [
-        '#4A90D9', '#E74C3C', '#2ECC71', '#F39C12', '#9B59B6',
-        '#1ABC9C', '#E67E22', '#3498DB', '#E91E63', '#00BCD4',
-        '#FF5722', '#795548', '#607D8B', '#CDDC39', '#FFC107'
-    ];
-
-    pieChartInstance = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: sortedData.map(d => `${d.emoji} ${d.name}`),
-            datasets: [{
-                data: sortedData.map(d => d.amount),
-                backgroundColor: colors.slice(0, sortedData.length),
-                borderWidth: 3,
-                borderColor: '#fff',
-                hoverBorderColor: '#fff',
-                hoverBorderWidth: 4,
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: {
-                        padding: 16,
-                        usePointStyle: true,
-                        pointStyleWidth: 10,
-                        font: { size: 11 },
-                        generateLabels: function(chart) {
-                            const data = chart.data;
-                            return data.labels.map((label, i) => ({
-                                text: `${label}  ¥${data.datasets[0].data[i].toFixed(0)}`,
-                                fillStyle: data.datasets[0].backgroundColor[i],
-                                strokeStyle: data.datasets[0].backgroundColor[i],
-                                lineWidth: 0,
-                                hidden: false,
-                                index: i,
-                                pointStyle: 'circle',
-                                rotation: 0
-                            }));
-                        }
-                    }
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(ctx) {
-                            const value = ctx.parsed;
-                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
-                            return ` ¥${value.toFixed(2)} · ${pct}%`;
-                        }
-                    }
-                }
-            },
-        }
-    });
+  document.getElementById('statsChangePercent').textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+  document.getElementById('statsHighest').textContent = '¥' + Math.max(...timeline.map(t => t.balance)).toFixed(2);
+  document.getElementById('statsLowest').textContent = '¥' + Math.min(...timeline.map(t => t.balance)).toFixed(2);
 }
 
-function renderBarChart(monthTxns) {
-    const canvas = document.getElementById('barChart');
-    if (!canvas) return;
+function renderStatsDetail(records, accounts) {
+  const container = document.getElementById('statsDetailList');
+  if (!container) return;
+  if (!statsAccountId) { container.innerHTML = ''; return; }
 
-    const ctx = canvas.getContext('2d');
-    if (barChartInstance) barChartInstance.destroy();
+  const account = accounts.find(a => a.id === statsAccountId);
+  const nameMap = {};
+  accounts.forEach(a => { nameMap[a.id] = a; });
 
-    const dailyStats = {};
-    monthTxns.forEach(t => {
-        const day = t.date;
-        if (!dailyStats[day]) dailyStats[day] = 0;
-        dailyStats[day] += t.amount;
-    });
+  // 只显示包含该账户的记录
+  const filtered = records.filter(r => r.balances && r.balances[statsAccountId] !== undefined);
+  filtered.sort((a, b) => b.date.localeCompare(a.date));
 
-    const daysInMonth = new Date(statsYear, statsMonth, 0).getDate();
-    const labels = [];
-    const data = [];
+  if (filtered.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="padding:20px 0"><div class="empty-text">该时段无盘点数据</div></div>`;
+    return;
+  }
 
-    for (let d = 1; d <= daysInMonth; d++) {
-        const key = `${statsYear}-${String(statsMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        labels.push(`${d}日`);
-        data.push(dailyStats[key] || 0);
+  // 计算每次变化
+  container.innerHTML = filtered.map((r, i) => {
+    const balance = r.balances[statsAccountId];
+    let changeHtml = '';
+    if (i < filtered.length - 1) {
+      const prevBalance = filtered[i + 1].balances[statsAccountId];
+      const diff = balance - prevBalance;
+      changeHtml = `<span class="detail-change ${diff >= 0 ? 'positive' : 'negative'}">${diff >= 0 ? '+' : ''}¥${diff.toFixed(2)}</span>`;
+    } else {
+      changeHtml = `<span class="detail-change">起始</span>`;
     }
+    return `<div class="stats-detail-row">
+      <span class="detail-date">${formatDate(r.date)}</span>
+      <span class="detail-amount">¥${balance.toFixed(2)}</span>
+      ${changeHtml}
+      <span class="detail-note">${r.note || ''}</span>
+    </div>`;
+  }).join('');
+}
 
-    const barColor = statsType === 'expense' ? '#E74C3C' : '#2ECC71';
+// ==================== Chart.js 折线图 ====================
 
-    barChartInstance = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                data: data,
-                backgroundColor: data.map(v => v > 0 ? barColor : '#F0F0F0'),
-                borderRadius: 4,
-                borderSkipped: false,
-                maxBarThickness: 16,
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        label: function(ctx) {
-                            return ` ¥${ctx.parsed.y.toFixed(2)}`;
-                        }
-                    }
-                }
+let lineChartInstance = null;
+
+function renderLineChart(timeline) {
+  const canvas = document.getElementById('lineChart');
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  if (lineChartInstance) lineChartInstance.destroy();
+
+  if (timeline.length === 0) {
+    lineChartInstance = null;
+    return;
+  }
+
+  // 年视图时只显示每月最后一条
+  let displayData = timeline;
+  if (statsMode === 'year') {
+    const monthly = {};
+    timeline.forEach(t => {
+      const m = t.date.substring(5, 7);
+      if (!monthly[m] || t.date > monthly[m].date) monthly[m] = t;
+    });
+    displayData = Object.keys(monthly).sort().map(m => monthly[m]);
+  }
+
+  if (displayData.length === 0) return;
+
+  const labels = displayData.map(t => {
+    if (statsMode === 'year') {
+      return `${parseInt(t.date.substring(5, 7))}月`;
+    }
+    // 月视图：显示日
+    const d = t.date.substring(8);
+    return `${parseInt(d)}日`;
+  });
+
+  const data = displayData.map(t => t.balance);
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+  gradient.addColorStop(0, 'rgba(74, 144, 217, 0.25)');
+  gradient.addColorStop(1, 'rgba(74, 144, 217, 0.01)');
+
+  const accounts = getAccounts();
+  const account = accounts.find(a => a.id === statsAccountId);
+  const label = account ? account.name : '余额';
+
+  lineChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: label,
+        data: data,
+        borderColor: '#4A90D9',
+        backgroundColor: gradient,
+        fill: true,
+        borderWidth: 2.5,
+        pointRadius: displayData.length <= 31 ? 4 : 2,
+        pointBackgroundColor: '#4A90D9',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointHoverRadius: 6,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: function(items) {
+              const idx = items[0].dataIndex;
+              return displayData[idx] ? displayData[idx].date : '';
             },
-            scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: { font: { size: 10 }, maxTicksLimit: 15, autoSkip: true }
-                },
-                y: {
-                    grid: { color: '#F0F0F0' },
-                    ticks: {
-                        font: { size: 10 },
-                        callback: function(value) { return '¥' + value; }
-                    },
-                    beginAtZero: true
-                }
+            label: function(ctx) {
+              return ' ¥' + ctx.parsed.y.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             }
+          }
         }
-    });
-}
-
-function renderCategoryDetail(sortedData, total) {
-    const container = document.getElementById('categoryDetailList');
-    if (!container) return;
-
-    const colors = ['#4A90D9', '#E74C3C', '#2ECC71', '#F39C12', '#9B59B6',
-        '#1ABC9C', '#E67E22', '#3498DB', '#E91E63', '#00BCD4'];
-
-    container.innerHTML = sortedData.map((d, i) => {
-        const pct = total > 0 ? ((d.amount / total) * 100).toFixed(1) : 0;
-        return `
-            <div class="cat-detail-item">
-                <div class="cat-detail-left">
-                    <span class="cat-detail-emoji">${d.emoji}</span>
-                    <span class="cat-detail-name">${d.name}</span>
-                </div>
-                <div class="cat-detail-right">
-                    <div class="cat-detail-amount">¥${d.amount.toFixed(2)}</div>
-                    <div class="cat-detail-percent">${pct}%</div>
-                    <div class="cat-detail-bar-wrap">
-                        <div class="cat-detail-bar" style="width:${pct}%;background:${colors[i % colors.length]}"></div>
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-// ==================== 预算管理 ====================
-
-function openBudgetModal() {
-    const now = new Date();
-    const key = monthKey(now.getFullYear(), now.getMonth() + 1);
-    const budgetData = loadBudget();
-    document.getElementById('budgetInput').value = budgetData[key] || '';
-    document.getElementById('budgetModal').classList.add('active');
-    setTimeout(() => {
-        document.getElementById('budgetInput').focus();
-    }, 350);
-}
-
-function closeBudgetModal() {
-    document.getElementById('budgetModal').classList.remove('active');
-}
-
-function saveBudgetUI() {
-    const value = parseFloat(document.getElementById('budgetInput').value);
-    if (!value || value <= 0) {
-        showToast('请输入有效预算金额');
-        return;
-    }
-
-    const now = new Date();
-    const key = monthKey(now.getFullYear(), now.getMonth() + 1);
-    const budgetData = loadBudget();
-    budgetData[key] = Math.round(value * 100) / 100;
-    saveBudget(budgetData);
-
-    closeBudgetModal();
-    showToast('预算设置成功');
-    updateHomeView();
-}
-
-// ==================== 分类管理 ====================
-
-function openCategoryModal() {
-    categoryManageType = 'expense';
-    document.getElementById('categoryModal').classList.add('active');
-    updateCategoryManageTabs();
-    renderCategoryManageList();
-}
-
-function closeCategoryModal() {
-    document.getElementById('categoryModal').classList.remove('active');
-}
-
-function switchCategoryTab(type) {
-    categoryManageType = type;
-    updateCategoryManageTabs();
-    renderCategoryManageList();
-}
-
-function updateCategoryManageTabs() {
-    document.querySelectorAll('.cat-manage-tab').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.type === categoryManageType);
-    });
-}
-
-function renderCategoryManageList() {
-    const container = document.getElementById('categoryManageList');
-    const categories = getCategories();
-    const cats = categoryManageType === 'expense' ? categories.expense : categories.income;
-
-    container.innerHTML = cats.map(cat => `
-        <div class="cat-manage-item">
-            <div class="cat-manage-item-left">
-                <span>${cat.emoji}</span>
-                <span>${cat.name}</span>
-            </div>
-            <span class="cat-manage-delete" onclick="deleteCategory('${cat.id}')">删除</span>
-        </div>
-    `).join('');
-}
-
-function deleteCategory(id) {
-    const categories = getCategories();
-    const cats = categoryManageType === 'expense' ? categories.expense : categories.income;
-
-    if (cats.length <= 1) {
-        showToast('至少保留一个分类');
-        return;
-    }
-
-    const idx = cats.findIndex(c => c.id === id);
-    if (idx !== -1) {
-        const name = cats[idx].name;
-        if (confirm(`确定删除分类「${name}」吗？`)) {
-            cats.splice(idx, 1);
-            saveCategories(categories);
-            renderCategoryManageList();
-            showToast('分类已删���');
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: {
+            font: { size: 10 },
+            maxTicksLimit: statsMode === 'year' ? 12 : 15,
+            autoSkip: true
+          }
+        },
+        y: {
+          grid: { color: '#F0F0F0' },
+          ticks: {
+            font: { size: 11 },
+            callback: function(v) { return '¥' + (v >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0)); }
+          },
+          beginAtZero: false
         }
+      }
     }
+  });
 }
 
-function addCustomCategory() {
-    const input = document.getElementById('newCategoryInput');
-    const name = input.value.trim();
-    if (!name) {
-        showToast('请输入分类名称');
-        return;
-    }
+// ==================== 总资产折线图 ====================
 
-    const categories = getCategories();
-    const cats = categoryManageType === 'expense' ? categories.expense : categories.income;
+let totalAssetChartInstance = null;
 
-    if (cats.some(c => c.name === name)) {
-        showToast('分类名称已存在');
-        return;
-    }
+function renderTotalAssetChart(timeline) {
+  const canvas = document.getElementById('totalAssetChart');
+  if (!canvas) return;
 
-    cats.push({
-        id: 'custom_' + Date.now(),
-        name: name,
-        emoji: '🏷️',
-        icon: categoryManageType
+  const ctx = canvas.getContext('2d');
+  if (totalAssetChartInstance) totalAssetChartInstance.destroy();
+
+  if (timeline.length === 0) {
+    totalAssetChartInstance = null;
+    return;
+  }
+
+  // 年视图：取每月最后一条
+  let displayData = timeline;
+  if (statsMode === 'year') {
+    const monthly = {};
+    timeline.forEach(t => {
+      const m = t.date.substring(5, 7);
+      if (!monthly[m] || t.date > monthly[m].date) monthly[m] = t;
     });
+    displayData = Object.keys(monthly).sort().map(m => monthly[m]);
+  } else {
+    // 月视图：只显示当前月的数据
+    const mk = monthKey(statsYear, statsMonth);
+    displayData = timeline.filter(t => t.date.startsWith(mk));
+  }
 
-    saveCategories(categories);
-    input.value = '';
-    renderCategoryManageList();
-    showToast('分类添加成功');
+  if (displayData.length === 0) return;
+
+  const labels = displayData.map(t => {
+    if (statsMode === 'year') return `${parseInt(t.date.substring(5, 7))}月`;
+    return `${parseInt(t.date.substring(8))}日`;
+  });
+  const data = displayData.map(t => t.balance);
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+  gradient.addColorStop(0, 'rgba(126, 87, 194, 0.25)');
+  gradient.addColorStop(1, 'rgba(126, 87, 194, 0.01)');
+
+  totalAssetChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: '总资产',
+        data: data,
+        borderColor: '#7E57C2',
+        backgroundColor: gradient,
+        fill: true,
+        borderWidth: 2.5,
+        pointRadius: displayData.length <= 31 ? 4 : 2,
+        pointBackgroundColor: '#7E57C2',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointHoverRadius: 6,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: function(items) {
+              const idx = items[0].dataIndex;
+              return displayData[idx] ? displayData[idx].date : '';
+            },
+            label: function(ctx) {
+              return '总资产 ¥' + ctx.raw.toFixed(2);
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: {
+            font: { size: 11 },
+            maxTicksLimit: 12,
+            autoSkip: true
+          }
+        },
+        y: {
+          grid: { color: '#F0F0F0' },
+          ticks: {
+            font: { size: 11 },
+            callback: function(v) { return '¥' + (v >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0)); }
+          },
+          beginAtZero: false
+        }
+      }
+    }
+  });
 }
 
-// ==================== 账户管理 ====================
+// ==================== 账户管理弹窗 ====================
 
-const ACCOUNT_EMOJIS = ['🏦', '💳', '💰', '📱', '🏧', '💼', '🏠', '🐷'];
+let accountEditId = null;
 
 function openAccountModal(editId) {
-    accountManageEditId = editId || null;
-    const accounts = getAccounts();
-    const container = document.getElementById('accountManageList');
+  accountEditId = editId || null;
+  const accounts = getAccounts();
+  const container = document.getElementById('accountManageList');
 
-    container.innerHTML = accounts.map(a => `
-        <div class="acct-item">
-            <div class="acct-item-left">
-                <span class="acct-item-emoji">${a.emoji || '💳'}</span>
-                <div>
-                    <div class="acct-item-name">${a.name}</div>
-                    <div class="acct-item-type">${a.type || ''}</div>
-                </div>
-            </div>
-            <div class="acct-item-right">
-                <span class="acct-item-balance">¥${a.balance.toFixed(2)}</span>
-                <span class="acct-item-delete" onclick="event.stopPropagation();deleteAccount('${a.id}')">✕</span>
-            </div>
-        </div>
-    `).join('');
+  container.innerHTML = accounts.map(a => `
+    <div class="acct-manage-item" onclick="event.stopPropagation();openAccountModal('${a.id}')">
+      <div class="acct-manage-left">
+        <span class="acct-manage-emoji">${a.emoji || '💳'}</span>
+        <span class="acct-manage-name">${a.name}</span>
+      </div>
+      <span class="acct-manage-delete" onclick="event.stopPropagation();deleteAccount('${a.id}')">✕</span>
+    </div>`).join('');
 
-    document.getElementById('accountModal').classList.add('active');
+  if (editId) {
+    const acc = accounts.find(a => a.id === editId);
+    if (acc) {
+      document.getElementById('accountNameInput').value = acc.name;
+    }
+  } else {
+    document.getElementById('accountNameInput').value = '';
+  }
+
+  document.getElementById('accountModal').classList.add('active');
 }
 
 function closeAccountModal() {
-    document.getElementById('accountModal').classList.remove('active');
-    accountManageEditId = null;
+  document.getElementById('accountModal').classList.remove('active');
+  accountEditId = null;
 }
 
-function addAccount() {
-    const nameInput = document.getElementById('accountNameInput');
-    const balanceInput = document.getElementById('accountBalanceInput');
-    const name = nameInput.value.trim();
-    const balance = parseFloat(balanceInput.value);
+function saveAccount() {
+  const name = document.getElementById('accountNameInput').value.trim();
+  if (!name) { showToast('请输入账户名称'); return; }
 
-    if (!name) {
-        showToast('请输入账户名称');
-        return;
+  const accounts = getAccounts();
+  if (accountEditId) {
+    const idx = accounts.findIndex(a => a.id === accountEditId);
+    if (idx >= 0) {
+      accounts[idx].name = name;
+      accounts[idx].updatedAt = Date.now();
     }
-    if (isNaN(balance) || balance < 0) {
-        showToast('请输入有效余额');
-        return;
-    }
+    showToast('账户已更新');
+  } else {
+    const usedEmojis = new Set(accounts.map(a => a.emoji));
+    const emoji = DEFAULT_ACCOUNT_EMOJIS.find(e => !usedEmojis.has(e)) || '💳';
+    accounts.push({
+      id: 'acct_' + Date.now().toString(),
+      name: name,
+      emoji: emoji,
+      createdAt: Date.now()
+    });
+    showToast('账户添加成功');
+  }
 
-    const accounts = getAccounts();
-    const id = accountManageEditId || 'acct_' + Date.now().toString();
-    const rounded = Math.round(balance * 100) / 100;
-
-    if (accountManageEditId) {
-        const idx = accounts.findIndex(a => a.id === id);
-        if (idx !== -1) {
-            accounts[idx].name = name;
-            accounts[idx].balance = rounded;
-            accounts[idx].updatedAt = Date.now();
-        }
-        showToast('账户已更新');
-        accountManageEditId = null;
-    } else {
-        accounts.push({
-            id: id,
-            name: name,
-            balance: rounded,
-            emoji: ACCOUNT_EMOJIS[accounts.length % ACCOUNT_EMOJIS.length],
-            createdAt: Date.now()
-        });
-        showToast('账户添加成功');
-    }
-
-    saveAccounts(accounts);
-    nameInput.value = '';
-    balanceInput.value = '';
-    openAccountModal();
-    updateHomeView();
+  saveAccounts(accounts);
+  document.getElementById('accountNameInput').value = '';
+  accountEditId = null;
+  openAccountModal();
+  updateAllViews();
 }
 
 function deleteAccount(id) {
-    const accounts = getAccounts();
-    const account = accounts.find(a => a.id === id);
-    if (!account) return;
-
-    if (confirm(`确定删除账户「${account.name}」吗？`)) {
-        const filtered = accounts.filter(a => a.id !== id);
-        saveAccounts(filtered);
-        openAccountModal();
-        updateHomeView();
-        showToast('账户已删除');
-    }
+  const accounts = getAccounts();
+  const account = accounts.find(a => a.id === id);
+  if (!account) return;
+  if (!confirm(`确定删除账户「${account.name}」吗？\n删除后盘点记录中的余额数据将保留。`)) return;
+  saveAccounts(accounts.filter(a => a.id !== id));
+  if (statsAccountId === id) statsAccountId = null;
+  openAccountModal();
+  updateAllViews();
+  showToast('账户已删除');
 }
 
 // ==================== 数据导入/导出 ====================
 
 function exportData() {
-    const transactions = loadAllTransactions();
-    const accounts = getAccounts();
-    const categories = getCategories();
-    const budget = loadBudget();
-
-    const data = {
-        version: '2.0.0',
-        exportedAt: new Date().toISOString(),
-        transactions: transactions,
-        accounts: accounts,
-        categories: categories,
-        budget: budget
-    };
-
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `记账本数据_${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('数据导出成功');
+  const data = {
+    version: '3.0.0',
+    exportedAt: new Date().toISOString(),
+    accounts: getAccounts(),
+    records: loadAllRecords()
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `资产盘点数据_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('数据导出成功');
 }
 
 function importData() {
-    document.getElementById('importFile').click();
+  document.getElementById('importFile').click();
 }
 
 function handleImport(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.accounts || !Array.isArray(data.accounts)) {
+        showToast('无效的数据文件');
+        return;
+      }
 
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            const data = JSON.parse(e.target.result);
-            if (!data.transactions || !Array.isArray(data.transactions)) {
-                showToast('无效的数据文件');
-                return;
-            }
+      // 合并账户
+      const existingAccounts = getAccounts();
+      const existingIds = new Set(existingAccounts.map(a => a.id));
+      const newAccounts = data.accounts.filter(a => !existingIds.has(a.id));
+      if (newAccounts.length > 0) {
+        saveAccounts([...existingAccounts, ...newAccounts]);
+      }
 
-            if (confirm(`即将导入 ${data.transactions.length} 条记录，是否继续？\n（新格式按月存储，旧格式自动迁移）`)) {
-                // 导入交易（按月分片存储）
-                const existingIds = new Set(loadAllTransactions().map(t => t.id));
-                const newTxns = data.transactions.filter(t => !existingIds.has(t.id));
+      // 合并盘��记录
+      if (data.records && Array.isArray(data.records)) {
+        const existingRecords = loadAllRecords();
+        const existingRecordIds = new Set(existingRecords.map(r => r.id));
+        const newRecords = data.records.filter(r => !existingRecordIds.has(r.id));
+        newRecords.forEach(r => saveRecord(r));
+      }
 
-                const grouped = {};
-                newTxns.forEach(t => {
-                    const mk = (t.date || '').substring(0, 7);
-                    if (!mk) return;
-                    if (!grouped[mk]) grouped[mk] = [];
-                    grouped[mk].push(t);
-                });
-
-                Object.keys(grouped).forEach(mk => {
-                    const existing = loadTransactionsByMonth(mk);
-                    const merged = [...existing, ...grouped[mk]];
-                    saveTransactionsByMonth(mk, merged);
-                });
-
-                // 导入预算
-                if (data.budget) {
-                    const existingBudget = loadBudget();
-                    Object.assign(existingBudget, data.budget);
-                    saveBudget(existingBudget);
-                }
-
-                // 导入分类
-                if (data.categories) {
-                    saveCategories(data.categories);
-                }
-
-                // 导入账户
-                if (data.accounts && Array.isArray(data.accounts)) {
-                    const existingAccounts = getAccounts();
-                    const existingIds2 = new Set(existingAccounts.map(a => a.id));
-                    const newAccounts = data.accounts.filter(a => !existingIds2.has(a.id));
-                    saveAccounts([...existingAccounts, ...newAccounts]);
-                }
-
-                updateAllViews();
-                showToast(`成功导入 ${newTxns.length} 条记录`);
-            }
-        } catch (err) {
-            showToast('数据解析失败，请检查文件格式');
-        }
-    };
-    reader.readAsText(file);
-    event.target.value = '';
+      updateAllViews();
+      showToast(`导入成功：${data.accounts.length} 个账户`);
+    } catch (err) {
+      showToast('数据解析失败，请检查文件格式');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
 }
 
 function clearAllData() {
-    if (confirm('⚠️ 确定要清空所有记账数据吗？此操作不可恢复！')) {
-        if (confirm('再次确认：真的要删除所有数据吗？')) {
-            // 清除按月分片数据
-            const months = getMonthsWithData();
-            months.forEach(mk => localStorage.removeItem(getStorageKey(mk)));
-            localStorage.removeItem(META_KEY);
-            localStorage.removeItem(BUDGET_KEY);
-            localStorage.removeItem(ACCOUNT_KEY);
-            updateAllViews();
-            autoPushOnChange();
-            showToast('所有数据已清空');
-        }
-    }
+  if (!confirm('⚠️ 确定要清空所有数据吗？此操作不可恢复！')) return;
+  if (!confirm('再次确认：真的要删除所有数据吗？')) return;
+
+  const months = getMonthsWithData();
+  months.forEach(mk => localStorage.removeItem(storageKey(mk)));
+  localStorage.removeItem(META_KEY);
+  localStorage.removeItem(ACCOUNT_KEY);
+  updateAllViews();
+  autoPushOnChange();
+  showToast('所有数据已清空');
 }
 
-// ==================== Toast 提示 ====================
+// ==================== 删除盘点记录 ====================
 
-function showToast(message) {
-    const toast = document.getElementById('toast');
-    toast.textContent = message;
-    toast.classList.add('show');
-    clearTimeout(toast._timeout);
-    toast._timeout = setTimeout(() => {
-        toast.classList.remove('show');
-    }, 1800);
+function deleteRecordAndRefresh(id) {
+  if (!confirm('确定删除这条盘点记录吗？')) return;
+  deleteRecord(id);
+  updateAllViews();
+  showToast('已删除');
+}
+
+// ==================== Toast ====================
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toast._timeout);
+  toast._timeout = setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
+// ==================== 工具函数 ====================
+
+function formatDate(dateStr) {
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+  }
+  return dateStr;
 }
 
 // ==================== 全局刷新 ====================
 
 function updateAllViews() {
-    updateHomeView();
-    if (currentPage === 'stats') updateStatsView();
-    if (currentPage === 'list') updateListView();
+  if (currentPage === 'home') updateHomeView();
+  if (currentPage === 'stats') updateStatsView();
 }
 
 // ==================== Service Worker ====================
 
 function registerServiceWorker() {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js')
-            .then(() => {})
-            .catch(() => {});
-    }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 }
 
 // ==================== Supabase 云端同步 ====================
@@ -1294,309 +1013,176 @@ let syncDebounceTimer = null;
 const SYNC_DEBOUNCE_MS = 2000;
 
 function getSyncConfig() {
-    const saved = localStorage.getItem(SYNC_CONFIG_KEY);
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) {}
-    }
-    return { url: '', key: '', syncKey: '' };
+  const saved = localStorage.getItem(SYNC_CONFIG_KEY);
+  if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+  return { url: '', key: '', syncKey: '' };
 }
 
-function setSyncConfig(config) {
-    localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
-}
+function setSyncConfig(config) { localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config)); }
 
 function initSupabase() {
-    const config = getSyncConfig();
-    if (config.url && config.key && window.supabase) {
-        try {
-            _supabaseClient = window.supabase.createClient(config.url, config.key);
-            return true;
-        } catch (e) {
-            _supabaseClient = null;
-            return false;
-        }
-    }
-    return false;
+  const config = getSyncConfig();
+  if (config.url && config.key && window.supabase) {
+    try {
+      _supabaseClient = window.supabase.createClient(config.url, config.key);
+      return true;
+    } catch (e) { _supabaseClient = null; return false; }
+  }
+  return false;
 }
 
 function isSyncConfigured() {
-    const config = getSyncConfig();
-    return !!(config.url && config.key && config.syncKey);
+  const config = getSyncConfig();
+  return !!(config.url && config.key && config.syncKey);
 }
 
 function openSyncModal() {
-    const config = getSyncConfig();
-    document.getElementById('supabaseUrl').value = config.url || '';
-    document.getElementById('supabaseKey').value = config.key || '';
-    document.getElementById('syncKey').value = config.syncKey || '';
-    document.getElementById('syncModal').classList.add('active');
+  const config = getSyncConfig();
+  document.getElementById('supabaseUrl').value = config.url || '';
+  document.getElementById('supabaseKey').value = config.key || '';
+  document.getElementById('syncKey').value = config.syncKey || '';
+  document.getElementById('syncModal').classList.add('active');
 }
 
 function closeSyncModal() {
-    document.getElementById('syncModal').classList.remove('active');
+  document.getElementById('syncModal').classList.remove('active');
 }
 
-function saveSyncConfig() {
-    const url = document.getElementById('supabaseUrl').value.trim();
-    const key = document.getElementById('supabaseKey').value.trim();
-    const syncKey = document.getElementById('syncKey').value.trim();
-
-    if (!url || !key || !syncKey) {
-        showToast('请填写完整的配置信息');
-        return;
-    }
-
-    const config = { url, key, syncKey };
-    setSyncConfig(config);
-
-    if (initSupabase()) {
-        showToast('同步配置成功');
-        updateSyncBadge();
-        closeSyncModal();
-        syncPush();
-    } else {
-        showToast('Supabase 连接失败，请检查配置');
-    }
+function saveSyncConfigUI() {
+  const url = document.getElementById('supabaseUrl').value.trim();
+  const key = document.getElementById('supabaseKey').value.trim();
+  const syncKey = document.getElementById('syncKey').value.trim();
+  if (!url || !key || !syncKey) { showToast('请填写完整的配置信息'); return; }
+  setSyncConfig({ url, key, syncKey });
+  if (initSupabase()) {
+    showToast('同步配置成功');
+    updateSyncBadge();
+    closeSyncModal();
+    syncPush();
+  } else {
+    showToast('Supabase 连接失败');
+  }
 }
 
 function updateSyncBadge() {
-    const badge = document.getElementById('syncStatusBadge');
-    const indicator = document.getElementById('syncIndicator');
-    if (!badge || !indicator) return;
-
-    if (isSyncConfigured()) {
-        badge.textContent = '已配置';
-        badge.className = 'settings-value connected';
-        indicator.textContent = '☁️';
-    } else {
-        badge.textContent = '未配置';
-        badge.className = 'settings-value';
-        indicator.textContent = '☁️';
-    }
+  const badge = document.getElementById('syncStatusBadge');
+  const indicator = document.getElementById('syncIndicator');
+  if (!badge || !indicator) return;
+  if (isSyncConfigured()) {
+    badge.textContent = '已配置';
+    badge.className = 'settings-value connected';
+    indicator.textContent = '☁️';
+  } else {
+    badge.textContent = '未配置';
+    badge.className = 'settings-value';
+    indicator.textContent = '☁️';
+  }
 }
 
 function autoPullOnStart() {
-    try {
-        if (!isSyncConfigured()) return;
-        if (!initSupabase()) return;
-    } catch (e) { return; }
-
-    const config = getSyncConfig();
-    setSyncIndicator('syncing');
-    _supabaseClient
-        .from('sync_data')
-        .select('data, updated_at')
-        .eq('sync_key', config.syncKey)
-        .single()
-        .then(({ data, error }) => {
-            if (error && error.code !== 'PGRST116') {
-                setSyncIndicator('error');
-                return;
-            }
-            if (data && data.data) {
-                mergeCloudData(data.data);
-                updateAllViews();
-                setSyncIndicator('synced');
-                showToast('已同步云端数据');
-            } else {
-                setSyncIndicator('synced');
-            }
-        })
-        .catch(() => {
-            setSyncIndicator('error');
-        });
+  try {
+    if (!isSyncConfigured() || !initSupabase()) return;
+  } catch (e) { return; }
+  const config = getSyncConfig();
+  setSyncIndicator('syncing');
+  _supabaseClient.from('sync_data').select('data, updated_at').eq('sync_key', config.syncKey).single()
+    .then(({ data, error }) => {
+      if (error && error.code !== 'PGRST116') { setSyncIndicator('error'); return; }
+      if (data && data.data) {
+        mergeCloudData(data.data);
+        updateAllViews();
+        setSyncIndicator('synced');
+        showToast('已同步云端数据');
+      } else { setSyncIndicator('synced'); }
+    }).catch(() => setSyncIndicator('error'));
 }
 
 function autoPushOnChange() {
-    if (!isSyncConfigured()) return;
-
-    clearTimeout(syncDebounceTimer);
-    syncDebounceTimer = setTimeout(() => {
-        if (!initSupabase()) return;
-        setSyncIndicator('syncing');
-        doPush().then(() => {
-            setSyncIndicator('synced');
-        }).catch(() => {
-            setSyncIndicator('error');
-        });
-    }, SYNC_DEBOUNCE_MS);
+  if (!isSyncConfigured()) return;
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(() => {
+    if (!initSupabase()) return;
+    setSyncIndicator('syncing');
+    doPush().then(() => setSyncIndicator('synced')).catch(() => setSyncIndicator('error'));
+  }, SYNC_DEBOUNCE_MS);
 }
 
 async function syncPush() {
-    if (!isSyncConfigured()) {
-        showToast('请先配置云端同步');
-        return;
-    }
-    if (!initSupabase()) {
-        showToast('Supabase 连接失败');
-        return;
-    }
-
-    setSyncIndicator('syncing');
-    try {
-        await doPush();
-        setSyncIndicator('synced');
-        showToast('数据已上传到云端');
-    } catch (e) {
-        setSyncIndicator('error');
-        showToast('上传失败：' + (e.message || '网络错误'));
-    }
+  if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
+  if (!initSupabase()) { showToast('Supabase 连接失败'); return; }
+  setSyncIndicator('syncing');
+  try { await doPush(); setSyncIndicator('synced'); showToast('数据已上传到云端'); }
+  catch (e) { setSyncIndicator('error'); showToast('上传失败：' + (e.message || '网络错误')); }
 }
 
 async function syncPull() {
-    if (!isSyncConfigured()) {
-        showToast('请先配置云端同步');
-        return;
-    }
-    if (!initSupabase()) {
-        showToast('Supabase 连接失败');
-        return;
-    }
-
-    setSyncIndicator('syncing');
-    const config = getSyncConfig();
-    try {
-        const { data, error } = await _supabaseClient
-            .from('sync_data')
-            .select('data, updated_at')
-            .eq('sync_key', config.syncKey)
-            .single();
-
-        if (error && error.code !== 'PGRST116') throw error;
-
-        if (data && data.data) {
-            mergeCloudData(data.data);
-            updateAllViews();
-            setSyncIndicator('synced');
-            showToast('数据已从云端同步');
-        } else {
-            setSyncIndicator('synced');
-            showToast('云端暂无数据');
-        }
-    } catch (e) {
-        setSyncIndicator('error');
-        showToast('下载失败：' + (e.message || '网络错误'));
-    }
+  if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
+  if (!initSupabase()) { showToast('Supabase 连接失败'); return; }
+  setSyncIndicator('syncing');
+  const config = getSyncConfig();
+  try {
+    const { data, error } = await _supabaseClient.from('sync_data').select('data, updated_at').eq('sync_key', config.syncKey).single();
+    if (error && error.code !== 'PGRST116') throw error;
+    if (data && data.data) { mergeCloudData(data.data); updateAllViews(); setSyncIndicator('synced'); showToast('数据已从云端同步'); }
+    else { setSyncIndicator('synced'); showToast('云端暂无数据'); }
+  } catch (e) { setSyncIndicator('error'); showToast('下载失败：' + (e.message || '网络错误')); }
 }
 
 async function doPush() {
-    const config = getSyncConfig();
-    const payload = {
-        sync_key: config.syncKey,
-        data: {
-            transactions: loadAllTransactions(),
-            budgets: loadBudget(),
-            categories: getCategories(),
-            accounts: getAccounts()
-        },
-        updated_at: new Date().toISOString()
-    };
-
-    const { error } = await _supabaseClient
-        .from('sync_data')
-        .upsert(payload, { onConflict: 'sync_key' });
-
-    if (error) throw error;
+  const config = getSyncConfig();
+  const payload = {
+    sync_key: config.syncKey,
+    data: { accounts: getAccounts(), records: loadAllRecords() },
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await _supabaseClient.from('sync_data').upsert(payload, { onConflict: 'sync_key' });
+  if (error) throw error;
 }
 
 function mergeCloudData(cloudData) {
-    if (!cloudData || !cloudData.transactions) return;
+  if (!cloudData) return;
 
-    // 合并交易（按月分片）
-    const localTxns = loadAllTransactions();
-    const localMap = new Map(localTxns.map(t => [t.id, t]));
-
-    (cloudData.transactions || []).forEach(ct => {
-        const local = localMap.get(ct.id);
-        if (!local || (ct.updatedAt && (!local.updatedAt || ct.updatedAt > local.updatedAt))) {
-            localMap.set(ct.id, ct);
-        }
+  // 合并账户
+  if (cloudData.accounts && Array.isArray(cloudData.accounts)) {
+    const localAccounts = getAccounts();
+    const localMap = new Map(localAccounts.map(a => [a.id, a]));
+    cloudData.accounts.forEach(ca => {
+      const local = localMap.get(ca.id);
+      if (!local || (ca.updatedAt && (!local.updatedAt || ca.updatedAt > local.updatedAt))) {
+        localMap.set(ca.id, ca);
+      }
     });
+    localStorage.setItem(ACCOUNT_KEY, JSON.stringify(Array.from(localMap.values())));
+  }
 
-    localTxns.forEach(t => {
-        if (!localMap.has(t.id)) localMap.set(t.id, t);
+  // 合并记录
+  if (cloudData.records && Array.isArray(cloudData.records)) {
+    const existingIds = new Set(loadAllRecords().map(r => r.id));
+    cloudData.records.forEach(r => {
+      if (!existingIds.has(r.id)) { saveRecord(r); existingIds.add(r.id); }
     });
-
-    const merged = Array.from(localMap.values());
-    // 按月分片存储
-    const grouped = {};
-    merged.forEach(t => {
-        const mk = (t.date || '').substring(0, 7);
-        if (!mk) return;
-        if (!grouped[mk]) grouped[mk] = [];
-        grouped[mk].push(t);
-    });
-
-    // 清除现有月份数据
-    const existingMonths = getMonthsWithData();
-    existingMonths.forEach(mk => localStorage.removeItem(getStorageKey(mk)));
-
-    // 写入新数据
-    Object.keys(grouped).forEach(mk => {
-        saveTransactionsByMonth(mk, grouped[mk]);
-    });
-
-    // 合并预算
-    if (cloudData.budgets) {
-        const localBudgets = loadBudget();
-        const mergedBudgets = { ...cloudData.budgets, ...localBudgets };
-        localStorage.setItem(BUDGET_KEY, JSON.stringify(mergedBudgets));
-    }
-
-    // 合并分类
-    if (cloudData.categories) {
-        const localCats = getCategories();
-        const cloudCats = cloudData.categories;
-        ['expense', 'income'].forEach(type => {
-            if (cloudCats[type] && localCats[type]) {
-                const cloudIds = new Set(cloudCats[type].map(c => c.id));
-                const localOnly = localCats[type].filter(c => !cloudIds.has(c.id));
-                cloudCats[type] = [...cloudCats[type], ...localOnly];
-            }
-        });
-        localStorage.setItem(CATEGORY_KEY, JSON.stringify(cloudCats));
-    }
-
-    // 合并账户
-    if (cloudData.accounts && Array.isArray(cloudData.accounts)) {
-        const localAccounts = getAccounts();
-        const localMap2 = new Map(localAccounts.map(a => [a.id, a]));
-        const cloudAccounts = cloudData.accounts;
-        cloudAccounts.forEach(ca => {
-            const local = localMap2.get(ca.id);
-            if (!local || (ca.updatedAt && (!local.updatedAt || ca.updatedAt > local.updatedAt))) {
-                localMap2.set(ca.id, ca);
-            }
-        });
-        localStorage.setItem(ACCOUNT_KEY, JSON.stringify(Array.from(localMap2.values())));
-    }
+  }
 }
 
 function setSyncIndicator(state) {
-    const indicator = document.getElementById('syncIndicator');
-    if (!indicator) return;
-    indicator.className = 'sync-indicator ' + state;
+  const indicator = document.getElementById('syncIndicator');
+  if (!indicator) return;
+  indicator.className = 'sync-indicator ' + state;
 }
 
 // ==================== 弹窗遮罩关闭 ====================
 
 document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', function(e) {
-            if (e.target === this) {
-                this.classList.remove('active');
-                editingTransactionId = null;
-            }
-        });
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', function(e) {
+      if (e.target === this) this.classList.remove('active');
     });
-});
+  });
 
-// ==================== 启动应用 ====================
+  // 模式切换事件
+  document.querySelector('.mode-tabs')?.addEventListener('click', e => {
+    if (e.target.classList.contains('mode-tab')) changeStatsMode(e.target.dataset.mode);
+  });
 
-document.addEventListener('DOMContentLoaded', () => {
-    try {
-        init();
-    } catch (e) {
-        console.error('记账本初始化失败:', e);
-    }
+  try { init(); } catch (e) { console.error('初始化失败:', e); }
 });

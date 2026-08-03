@@ -5,123 +5,85 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="记账本">
+    <meta name="apple-mobile-web-app-title" content="资产盘点">
     <meta name="theme-color" content="#4A90D9">
     <link rel="manifest" href="manifest.json">
-    <title>记账本</title>
+    <title>资产盘点</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <div id="app">
+
         <!-- ========== 首页 ========== -->
         <div class="page page-home active" id="page-home">
             <div class="header">
                 <div class="header-date">
-                <span id="currentMonth"></span>
-                <span class="sync-indicator" id="syncIndicator" onclick="openSyncModal()">☁️</span>
-            </div>
-                <div class="header-balance">
-                    <div class="balance-item">
-                        <span class="balance-label">本月支出</span>
-                        <span class="balance-amount expense-color" id="monthExpense">¥0.00</span>
-                    </div>
-                    <div class="balance-item">
-                        <span class="balance-label">本月收入</span>
-                        <span class="balance-amount income-color" id="monthIncome">¥0.00</span>
-                    </div>
-                    <div class="balance-item">
-                        <span class="balance-label">本月结余</span>
-                        <span class="balance-amount" id="monthBalance">¥0.00</span>
-                    </div>
+                    <span id="currentMonth"></span>
+                    <span class="sync-indicator" id="syncIndicator" onclick="openSyncModal()">☁️</span>
                 </div>
+                <div class="header-subtitle">资产盘点 · 每月一次</div>
             </div>
 
-            <div class="budget-section" id="budgetSection">
-                <div class="budget-header">
-                    <span class="budget-title">本月预算</span>
-                    <span class="budget-amount" id="budgetText">未设置</span>
-                </div>
-                <div class="budget-bar">
-                    <div class="budget-bar-fill" id="budgetBarFill"></div>
-                </div>
-                <div class="budget-detail" id="budgetDetail"></div>
-            </div>
-
-            <div class="asset-overview" id="assetOverview">
-                <!-- 动态填充 -->
-            </div>
+            <div class="asset-overview" id="assetOverview"></div>
 
             <div class="section-title">
-                <span>最近账目</span>
-                <span class="section-more" onclick="switchPage('list')">查看全部 ></span>
+                <span>我的账户</span>
+                <span class="section-action" onclick="openCheckinModal()">+ 批量盘点</span>
             </div>
-            <div class="transaction-list" id="recentList">
-                <!-- 动态填充 -->
+            <div class="account-list" id="accountList"></div>
+
+            <div class="section-title">
+                <span>最近盘点</span>
             </div>
+            <div class="record-list" id="recentRecords"></div>
         </div>
 
         <!-- ========== 统计页 ========== -->
         <div class="page page-stats" id="page-stats">
             <div class="nav-bar">
-                <span class="nav-title">统计报表</span>
+                <span class="nav-title">资产趋势</span>
             </div>
-            <div class="stats-tabs">
-                <button class="stats-tab active" data-type="expense">支出</button>
-                <button class="stats-tab" data-type="income">收入</button>
+            <div class="mode-tabs">
+                <button class="mode-tab active" data-mode="month" onclick="changeStatsMode('month')">按月</button>
+                <button class="mode-tab" data-mode="year" onclick="changeStatsMode('year')">按年</button>
             </div>
-            <div class="stats-month-nav">
-                <span class="month-nav-btn" onclick="changeStatsMonth(-1)"><</span>
-                <span id="statsMonthLabel"></span>
-                <span class="month-nav-btn" onclick="changeStatsMonth(1)">></span>
+            <div class="period-nav">
+                <span class="month-nav-btn" onclick="changeStatsPeriod(-1)"><</span>
+                <span id="statsPeriodLabel"></span>
+                <span class="month-nav-btn" onclick="changeStatsPeriod(1)">></span>
+            </div>
+            <div class="stats-account-selector" id="statsAccountSelector"></div>
+            <div class="chart-box">
+                <div class="chart-title">📊 总资产趋势</div>
+                <div class="chart-wrap">
+                    <canvas id="totalAssetChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-box">
+                <div class="chart-title">余额变化</div>
+                <div class="chart-wrap">
+                    <canvas id="lineChart"></canvas>
+                </div>
             </div>
             <div class="stats-summary">
                 <div class="stats-summary-item">
-                    <span class="stats-summary-label">总计</span>
-                    <span class="stats-summary-amount" id="statsTotal">¥0.00</span>
+                    <span class="stats-summary-label">增长/减少</span>
+                    <span class="stats-summary-value" id="statsGrowthAmount">--</span>
                 </div>
                 <div class="stats-summary-item">
-                    <span class="stats-summary-label">笔数</span>
-                    <span class="stats-summary-amount" id="statsCount">0</span>
+                    <span class="stats-summary-label">变化率</span>
+                    <span class="stats-summary-value" id="statsChangePercent">--</span>
                 </div>
                 <div class="stats-summary-item">
-                    <span class="stats-summary-label">平均</span>
-                    <span class="stats-summary-amount" id="statsAvg">¥0.00</span>
+                    <span class="stats-summary-label">最高</span>
+                    <span class="stats-summary-value" id="statsHighest">--</span>
+                </div>
+                <div class="stats-summary-item">
+                    <span class="stats-summary-label">最低</span>
+                    <span class="stats-summary-value" id="statsLowest">--</span>
                 </div>
             </div>
-            <div class="chart-container">
-                <div class="chart-title">分类占比</div>
-                <canvas id="pieChart"></canvas>
-            </div>
-            <div class="chart-container">
-                <div class="chart-title">每日趋势</div>
-                <canvas id="barChart"></canvas>
-            </div>
-            <div class="category-detail-list" id="categoryDetailList">
-                <!-- 动态填充 -->
-            </div>
-        </div>
-
-        <!-- ========== 账目列表页 ========== -->
-        <div class="page page-list" id="page-list">
-            <div class="nav-bar">
-                <span class="nav-title">账目明细</span>
-            </div>
-            <div class="filter-bar">
-                <button class="filter-btn active" data-filter="all">全部</button>
-                <button class="filter-btn" data-filter="expense">支出</button>
-                <button class="filter-btn" data-filter="income">收入</button>
-            </div>
-            <div class="list-month-nav">
-                <span class="month-nav-btn" onclick="changeListMonth(-1)"><</span>
-                <span id="listMonthLabel"></span>
-                <span class="month-nav-btn" onclick="changeListMonth(1)">></span>
-            </div>
-            <div class="transaction-list full-list" id="fullList">
-                <!-- 动态填充 -->
-            </div>
-            <div class="pagination" id="pagination">
-                <!-- 动态填充 -->
-            </div>
+            <div class="stats-detail-list" id="statsDetailList"></div>
         </div>
 
         <!-- ========== 设置页 ========== -->
@@ -130,23 +92,11 @@
                 <span class="nav-title">设置</span>
             </div>
             <div class="settings-group">
-                <div class="settings-item" onclick="openBudgetModal()">
-                    <span class="settings-icon">💰</span>
-                    <span class="settings-label">预算管理</span>
-                    <span class="settings-arrow">></span>
-                </div>
-                <div class="settings-item" onclick="openCategoryModal()">
-                    <span class="settings-icon">🏷️</span>
-                    <span class="settings-label">分类管理</span>
-                    <span class="settings-arrow">></span>
-                </div>
                 <div class="settings-item" onclick="openAccountModal()">
                     <span class="settings-icon">🏦</span>
                     <span class="settings-label">账户管理</span>
                     <span class="settings-arrow">></span>
                 </div>
-            </div>
-            <div class="settings-group">
                 <div class="settings-item" onclick="openSyncModal()">
                     <span class="settings-icon">☁️</span>
                     <span class="settings-label">云端同步</span>
@@ -175,8 +125,8 @@
                 </div>
             </div>
             <div class="app-info">
-                <p>记账本 v2.0.0</p>
-                <p>PWA 跨平台记账应用</p>
+                <p>资产盘点 v3.0.0</p>
+                <p>每月一次，掌握资产变化</p>
             </div>
         </div>
 
@@ -190,86 +140,50 @@
                 <span class="tab-icon">📊</span>
                 <span class="tab-label">统计</span>
             </div>
-            <div class="tab-item tab-add" onclick="openAddModal()">
-                <div class="tab-add-btn">+</div>
-            </div>
-            <div class="tab-item" data-page="list" onclick="switchPage('list')">
-                <span class="tab-icon">📋</span>
-                <span class="tab-label">明细</span>
-            </div>
             <div class="tab-item" data-page="settings" onclick="switchPage('settings')">
                 <span class="tab-icon">⚙️</span>
                 <span class="tab-label">设置</span>
             </div>
         </div>
 
-        <!-- ========== 记一笔弹窗 ========== -->
-        <div class="modal-overlay" id="addModal">
-            <div class="modal-content add-modal-content">
+        <!-- ========== 盘点弹窗 ========== -->
+        <div class="modal-overlay" id="checkinModal">
+            <div class="modal-content">
                 <div class="modal-header">
-                    <span class="modal-close" onclick="closeAddModal()">✕</span>
-                    <span class="modal-title">记一笔</span>
-                    <span class="modal-save" onclick="saveTransaction()">保存</span>
+                    <span class="modal-close" onclick="closeCheckinModal()">✕</span>
+                    <span class="modal-title" id="checkinModalTitle">资产盘点</span>
+                    <span class="modal-save" onclick="saveCheckin()">保存</span>
                 </div>
                 <div class="modal-body">
-                    <div class="type-switch">
-                        <button class="type-btn active" data-type="expense" onclick="switchType('expense')">支出</button>
-                        <button class="type-btn" data-type="income" onclick="switchType('income')">收入</button>
-                    </div>
-                    <div class="amount-input-section">
-                        <span class="amount-symbol">¥</span>
-                        <input type="number" class="amount-input" id="amountInput" placeholder="0.00" step="0.01" inputmode="decimal">
-                    </div>
-                    <div class="category-grid" id="categoryGrid">
-                        <!-- 动态填充 -->
+                    <div class="form-row">
+                        <label class="form-label">盘点日期</label>
+                        <input type="date" class="note-input" id="checkinDate">
                     </div>
                     <div class="form-row">
-                        <input type="date" class="date-input" id="dateInput">
+                        <label class="form-label">账户余额</label>
+                        <div class="checkin-balances" id="checkinBalances"></div>
                     </div>
                     <div class="form-row">
-                        <input type="text" class="note-input" id="noteInput" placeholder="备注（可选）" maxlength="50">
+                        <label class="form-label">备注</label>
+                        <input type="text" class="note-input" id="checkinNote" placeholder="如：月底盘点" maxlength="50">
                     </div>
+                    <input type="hidden" id="checkinRecordId">
                 </div>
             </div>
         </div>
 
-        <!-- ========== 预算弹窗 ========== -->
-        <div class="modal-overlay" id="budgetModal">
+        <!-- ========== 账户管理弹窗 ========== -->
+        <div class="modal-overlay" id="accountModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <span class="modal-close" onclick="closeBudgetModal()">✕</span>
-                    <span class="modal-title">设置月度预算</span>
-                    <span class="modal-save" onclick="saveBudgetUI()">保存</span>
+                    <span class="modal-close" onclick="closeAccountModal()">✕</span>
+                    <span class="modal-title">账户管理</span>
+                    <span class="modal-save" onclick="saveAccount()">保存</span>
                 </div>
                 <div class="modal-body">
-                    <div class="amount-input-section">
-                        <span class="amount-symbol">¥</span>
-                        <input type="number" class="amount-input" id="budgetInput" placeholder="0.00" step="0.01" inputmode="decimal">
-                    </div>
-                    <p class="modal-hint">设置每月支出预算，帮助你控制消费</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- ========== 分类管理弹窗 ========== -->
-        <div class="modal-overlay" id="categoryModal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <span class="modal-close" onclick="closeCategoryModal()">✕</span>
-                    <span class="modal-title">分类管理</span>
-                    <span class="modal-save" onclick="addCustomCategory()">+</span>
-                </div>
-                <div class="modal-body">
-                    <div class="category-manage-tabs">
-                        <button class="cat-manage-tab active" data-type="expense" onclick="switchCategoryTab('expense')">支出分类</button>
-                        <button class="cat-manage-tab" data-type="income" onclick="switchCategoryTab('income')">收入分类</button>
-                    </div>
-                    <div class="category-manage-list" id="categoryManageList">
-                        <!-- 动态填充 -->
-                    </div>
-                    <div class="add-category-row">
-                        <input type="text" id="newCategoryInput" placeholder="输入新分类名称" maxlength="8">
-                        <button class="add-category-btn" onclick="addCustomCategory()">添加</button>
+                    <div class="account-manage-list" id="accountManageList"></div>
+                    <div class="add-account-row">
+                        <input type="text" id="accountNameInput" placeholder="账户名称（如：支付宝）" maxlength="20">
                     </div>
                 </div>
             </div>
@@ -281,7 +195,7 @@
                 <div class="modal-header">
                     <span class="modal-close" onclick="closeSyncModal()">✕</span>
                     <span class="modal-title">云端同步设置</span>
-                    <span class="modal-save" onclick="saveSyncConfig()">保存</span>
+                    <span class="modal-save" onclick="saveSyncConfigUI()">保存</span>
                 </div>
                 <div class="modal-body">
                     <div class="form-row">
@@ -300,28 +214,7 @@
                         <button class="sync-btn" onclick="syncPush()">☁️ 上传到云端</button>
                         <button class="sync-btn" onclick="syncPull()">📥 从云端下载</button>
                     </div>
-                    <p class="modal-hint" id="syncHint">配置后，两台手机即可自动同步数据</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- ========== 账户管理弹窗 ========== -->
-        <div class="modal-overlay" id="accountModal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <span class="modal-close" onclick="closeAccountModal()">✕</span>
-                    <span class="modal-title">账户管理</span>
-                    <span class="modal-save" onclick="addAccount()">+</span>
-                </div>
-                <div class="modal-body">
-                    <div class="account-manage-list" id="accountManageList">
-                        <!-- 动态填充 -->
-                    </div>
-                    <div class="add-account-row">
-                        <input type="text" id="accountNameInput" placeholder="账户名称（如：工商银行）" maxlength="20">
-                        <input type="number" id="accountBalanceInput" placeholder="余额" step="0.01" inputmode="decimal">
-                        <button class="add-category-btn" onclick="addAccount()">保存</button>
-                    </div>
+                    <p class="modal-hint">配置后，两台手机即可自动同步数据</p>
                 </div>
             </div>
         </div>

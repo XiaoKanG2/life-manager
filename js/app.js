@@ -95,6 +95,11 @@ function deleteRecord(id) {
   autoPushOnChange();
 }
 
+function findRecordById(id) {
+  const records = loadAllRecords();
+  return records.find(r => r.id === id);
+}
+
 // 获取每个账户的最新余额（从最近一次盘点的记录中取）
 function getLatestBalances() {
   const records = loadAllRecords();
@@ -418,24 +423,42 @@ function saveCheckin() {
   const note = document.getElementById('checkinNote').value.trim();
   if (!date) { showToast('请选择日期'); return; }
 
-  const balances = {};
+  // 收集弹窗中填写的余额
+  const inputBalances = {};
   const inputs = document.getElementById('checkinBalances').querySelectorAll('input');
   let hasValue = false;
   inputs.forEach(inp => {
     const aid = inp.dataset.accountId;
     const val = parseFloat(inp.value);
     if (!isNaN(val) && val >= 0) {
-      balances[aid] = Math.round(val * 100) / 100;
+      inputBalances[aid] = Math.round(val * 100) / 100;
       hasValue = true;
     }
   });
 
-  if (!hasValue && Object.keys(balances).length === 0) {
+  if (!hasValue) {
     showToast('请至少输入一个账户余额');
     return;
   }
 
   const recordId = document.getElementById('checkinRecordId').value;
+
+  // 合并策略：以最新盘点记录的余额为基础，用本次输入覆盖
+  // 这样单个账户盘点时，其他账户保持上次的余额不变
+  let balances = {};
+  if (recordId) {
+    // 编辑已有记录：以该记录原有余额为基础
+    const existing = findRecordById(recordId);
+    if (existing && existing.balances) {
+      balances = { ...existing.balances };
+    }
+  } else {
+    // 新增记录：以上一次盘点的最新余额为基础
+    balances = { ...getLatestBalances() };
+  }
+  // 用本次输入覆盖
+  Object.assign(balances, inputBalances);
+
   const record = {
     id: recordId || Date.now().toString(),
     date: date,

@@ -19,7 +19,10 @@
             <div class="header">
                 <div class="header-date">
                     <span id="currentMonth"></span>
-                    <span class="sync-indicator" id="syncIndicator" onclick="openSyncModal()">☁️</span>
+                    <span class="header-icons">
+                        <span class="eye-toggle" id="eyeToggle" onclick="toggleAmountVisible()" title="切换金额显示">👁️</span>
+                        <span class="sync-indicator" id="syncIndicator" onclick="openSyncModal()">☁️</span>
+                    </span>
                 </div>
                 <div class="header-subtitle">资产盘点 · 每月一次</div>
             </div>
@@ -213,6 +216,9 @@
                     <div class="sync-actions">
                         <button class="sync-btn" onclick="syncPush()">☁️ 上传到云端</button>
                         <button class="sync-btn" onclick="syncPull()">📥 从云端下载</button>
+                    </div>
+                    <div class="sync-actions">
+                        <button class="sync-btn sync-btn-danger" onclick="syncForcePull()">🔄 以云端为准（覆盖本地）</button>
                     </div>
                     <p class="modal-hint">配置后，两台手机即可自动同步数据</p>
                 </div>

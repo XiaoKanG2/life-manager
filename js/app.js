@@ -5,6 +5,60 @@ const ACCOUNT_KEY = 'asset_accounts';
 const ASSET_PREFIX = 'asset_data_';
 const META_KEY = 'asset_meta';
 const SYNC_CONFIG_KEY = 'asset_sync_config';
+const AMOUNT_VISIBLE_KEY = 'asset_amount_visible';
+
+// ==================== 金额脱敏 ====================
+
+let amountVisible = true;
+
+function loadAmountVisible() {
+  const saved = localStorage.getItem(AMOUNT_VISIBLE_KEY);
+  if (saved !== null) {
+    amountVisible = saved === 'true';
+  } else {
+    amountVisible = true;
+  }
+  updateEyeIcon();
+}
+
+function toggleAmountVisible() {
+  amountVisible = !amountVisible;
+  localStorage.setItem(AMOUNT_VISIBLE_KEY, amountVisible.toString());
+  updateEyeIcon();
+  updateAllViews();
+}
+
+function updateEyeIcon() {
+  const el = document.getElementById('eyeToggle');
+  if (!el) return;
+  if (amountVisible) {
+    el.textContent = '👁️';
+    el.className = 'eye-toggle';
+    el.title = '点击隐藏金额';
+  } else {
+    el.textContent = '🙈';
+    el.className = 'eye-toggle hidden';
+    el.title = '点击显示金额';
+  }
+}
+
+function fmtAmt(amount) {
+  if (!amountVisible) return '¥***.**';
+  return '¥' + Number(amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// 带符号的金额格式化（用于增长/减少）
+function fmtAmtSigned(amount) {
+  if (!amountVisible) return '¥***.**';
+  const sign = amount >= 0 ? '+' : '';
+  return sign + '¥' + Math.abs(amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// 金额脱敏包装：传入已格式化的字符串，脱敏时替换数字部分
+function maskIfNeeded(text) {
+  if (amountVisible) return text;
+  return text.replace(/[\d,]+(\.\d+)?/g, '***.**');
+}
 
 // ==================== 账户数据层 ====================
 
@@ -208,6 +262,7 @@ let statsYear, statsMonth;
 function init() {
   try {
     migrateOldData();
+    loadAmountVisible();
     const now = new Date();
     statsYear = now.getFullYear();
     statsMonth = now.getMonth() + 1;
@@ -267,7 +322,7 @@ function updateHomeView() {
         <div class="asset-card-header">
           <span class="asset-card-title">💰 总资产</span>
         </div>
-        <div class="asset-card-balance">¥${totalAssets.toFixed(2)}</div>
+        <div class="asset-card-balance">${fmtAmt(totalAssets)}</div>
       </div>`;
   }
 
@@ -285,7 +340,7 @@ function updateHomeView() {
             <span class="acct-row-name">${a.name}</span>
             <span class="acct-row-hint">点击盘点</span>
           </div>
-          <span class="acct-row-balance">¥${balance.toFixed(2)}</span>
+          <span class="acct-row-balance">${fmtAmt(balance)}</span>
         </div>`;
     }).join('');
   }
@@ -312,7 +367,7 @@ function renderRecentRecords(records, accounts) {
     if (r.balances) {
       Object.keys(r.balances).forEach(aid => {
         const acc = nameMap[aid];
-        changedAccounts.push(`${acc ? acc.emoji : ''}${acc ? acc.name : aid} ¥${r.balances[aid].toFixed(0)}`);
+        changedAccounts.push(`${acc ? acc.emoji : ''}${acc ? acc.name : aid} ${maskIfNeeded('¥' + r.balances[aid].toFixed(0))}`);
       });
     }
     return `
@@ -563,10 +618,10 @@ function changeStatsPeriod(delta) {
 
 function updateStatsSummary(timeline) {
   if (timeline.length < 2) {
-    document.getElementById('statsGrowthAmount').textContent = timeline.length > 0 ? '¥0.00' : '--';
-    document.getElementById('statsChangePercent').textContent = timeline.length > 0 ? '0%' : '--';
-    document.getElementById('statsHighest').textContent = timeline.length > 0 ? `¥${Math.max(...timeline.map(t => t.balance)).toFixed(2)}` : '--';
-    document.getElementById('statsLowest').textContent = timeline.length > 0 ? `¥${Math.min(...timeline.map(t => t.balance)).toFixed(2)}` : '--';
+    document.getElementById('statsGrowthAmount').textContent = timeline.length > 0 ? fmtAmt(0) : '--';
+    document.getElementById('statsChangePercent').textContent = timeline.length > 0 ? (amountVisible ? '0%' : '**%') : '--';
+    document.getElementById('statsHighest').textContent = timeline.length > 0 ? fmtAmt(Math.max(...timeline.map(t => t.balance))) : '--';
+    document.getElementById('statsLowest').textContent = timeline.length > 0 ? fmtAmt(Math.min(...timeline.map(t => t.balance))) : '--';
     return;
   }
 
@@ -576,12 +631,12 @@ function updateStatsSummary(timeline) {
   const pct = first !== 0 ? ((change / first) * 100) : 0;
 
   const changeEl = document.getElementById('statsGrowthAmount');
-  changeEl.textContent = (change >= 0 ? '+' : '') + '¥' + change.toFixed(2);
+  changeEl.textContent = fmtAmtSigned(change);
   changeEl.className = 'stats-summary-value ' + (change >= 0 ? 'positive' : 'negative');
 
-  document.getElementById('statsChangePercent').textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
-  document.getElementById('statsHighest').textContent = '¥' + Math.max(...timeline.map(t => t.balance)).toFixed(2);
-  document.getElementById('statsLowest').textContent = '¥' + Math.min(...timeline.map(t => t.balance)).toFixed(2);
+  document.getElementById('statsChangePercent').textContent = amountVisible ? ((pct >= 0 ? '+' : '') + pct.toFixed(2) + '%') : '**%';
+  document.getElementById('statsHighest').textContent = fmtAmt(Math.max(...timeline.map(t => t.balance)));
+  document.getElementById('statsLowest').textContent = fmtAmt(Math.min(...timeline.map(t => t.balance)));
 }
 
 function renderStatsDetail(records, accounts) {
@@ -609,13 +664,13 @@ function renderStatsDetail(records, accounts) {
     if (i < filtered.length - 1) {
       const prevBalance = filtered[i + 1].balances[statsAccountId];
       const diff = balance - prevBalance;
-      changeHtml = `<span class="detail-change ${diff >= 0 ? 'positive' : 'negative'}">${diff >= 0 ? '+' : ''}¥${diff.toFixed(2)}</span>`;
+      changeHtml = `<span class="detail-change ${diff >= 0 ? 'positive' : 'negative'}">${fmtAmtSigned(diff)}</span>`;
     } else {
       changeHtml = `<span class="detail-change">起始</span>`;
     }
     return `<div class="stats-detail-row">
       <span class="detail-date">${formatDate(r.date)}</span>
-      <span class="detail-amount">¥${balance.toFixed(2)}</span>
+      <span class="detail-amount">${fmtAmt(balance)}</span>
       ${changeHtml}
       <span class="detail-note">${r.note || ''}</span>
     </div>`;
@@ -702,7 +757,7 @@ function renderLineChart(timeline) {
               return displayData[idx] ? displayData[idx].date : '';
             },
             label: function(ctx) {
-              return ' ¥' + ctx.parsed.y.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              return amountVisible ? (' ¥' + ctx.parsed.y.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : ' ¥***.**';
             }
           }
         }
@@ -804,7 +859,7 @@ function renderTotalAssetChart(timeline) {
               return displayData[idx] ? displayData[idx].date : '';
             },
             label: function(ctx) {
-              return '总资产 ¥' + ctx.raw.toFixed(2);
+              return amountVisible ? ('总资产 ¥' + ctx.raw.toFixed(2)) : '总资产 ¥***.**';
             }
           }
         }
@@ -1164,6 +1219,66 @@ async function syncPull() {
     if (data && data.data) { mergeCloudData(data.data); updateAllViews(); setSyncIndicator('synced'); showToast('数据已从云端同步'); }
     else { setSyncIndicator('synced'); showToast('云端暂无数据'); }
   } catch (e) { setSyncIndicator('error'); showToast('下载失败：' + (e.message || '网络错误')); }
+}
+
+async function syncForcePull() {
+  if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
+  if (!initSupabase() || !_supabaseClient) { showToast('Supabase 连接失败，请检查 CDN 是否加载'); return; }
+  if (!confirm('⚠️ 此操作将用云端数据完全覆盖本地数据（包括账户和所有盘点记录），本地未同步的修改将丢失。\n\n确定继续？')) return;
+
+  setSyncIndicator('syncing');
+  const config = getSyncConfig();
+  try {
+    const { data, error } = await _supabaseClient.from('sync_data').select('data, updated_at').eq('sync_key', config.syncKey).single();
+    if (error && error.code !== 'PGRST116') throw error;
+    if (!data || !data.data) {
+      setSyncIndicator('synced');
+      showToast('云端暂无数据，未做任何修改');
+      return;
+    }
+
+    // 清空本地全部数据
+    const months = getMonthsWithData();
+    months.forEach(mk => localStorage.removeItem(storageKey(mk)));
+    localStorage.removeItem(META_KEY);
+    localStorage.removeItem(ACCOUNT_KEY);
+
+    // 写入云端账户
+    const cloudData = data.data;
+    if (cloudData.accounts && Array.isArray(cloudData.accounts)) {
+      localStorage.setItem(ACCOUNT_KEY, JSON.stringify(cloudData.accounts));
+    }
+
+    // 写入云端记录（按月分片）
+    if (cloudData.records && Array.isArray(cloudData.records)) {
+      cloudData.records.forEach(r => {
+        const mk = r.date.substring(0, 7);
+        const monthRecords = loadRecordsByMonth(mk);
+        monthRecords.push(r);
+        monthRecords.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+        // 去重后保存
+        const unique = [];
+        const seen = new Set();
+        monthRecords.forEach(rec => {
+          if (!seen.has(rec.id)) { seen.add(rec.id); unique.push(rec); }
+        });
+        saveRecordsByMonth(mk, unique);
+      });
+    }
+
+    // 重置统计页选中账户
+    const newAccounts = getAccounts();
+    if (newAccounts.length > 0) statsAccountId = newAccounts[0].id;
+    else statsAccountId = null;
+
+    updateSyncBadge();
+    setSyncIndicator('synced');
+    updateAllViews();
+    showToast('已从云端完全恢复，本地数据已被覆盖');
+  } catch (e) {
+    setSyncIndicator('error');
+    showToast('同步失败：' + (e.message || '网络错误'));
+  }
 }
 
 async function doPush() {

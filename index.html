@@ -25,6 +25,7 @@
                     </span>
                 </div>
                 <div class="header-subtitle">资产盘点 · 每月一次</div>
+                <div class="checkin-days" id="checkinDays"></div>
             </div>
 
             <div class="asset-overview" id="assetOverview"></div>
@@ -56,10 +57,17 @@
                 <span class="month-nav-btn" onclick="changeStatsPeriod(1)">></span>
             </div>
             <div class="stats-account-selector" id="statsAccountSelector"></div>
+            <div class="comparison-cards" id="comparisonCards"></div>
             <div class="chart-box">
                 <div class="chart-title">📊 总资产趋势</div>
                 <div class="chart-wrap">
                     <canvas id="totalAssetChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-box">
+                <div class="chart-title">🥧 资产构成</div>
+                <div class="chart-wrap pie-chart-wrap">
+                    <canvas id="pieChart"></canvas>
                 </div>
             </div>
             <div class="chart-box">

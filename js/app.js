@@ -200,7 +200,6 @@ function getAccountTimeline(accountId) {
     .map(r => ({ date: r.date, balance: r.balances[accountId] }));
 }
 
-// 获取总资产时间线（所有账户余额求和）
 function getTotalAssetTimeline() {
   const accounts = getAccounts();
   if (accounts.length === 0) return [];
@@ -214,6 +213,131 @@ function getTotalAssetTimeline() {
       accountIds.forEach(id => { if (r.balances[id] !== undefined) total += r.balances[id]; });
       return { date: r.date, balance: total };
     });
+}
+
+// ==================== 盘点天数 ====================
+
+function getDaysSinceLastCheckin() {
+  const records = loadAllRecords();
+  if (records.length === 0) return null;
+  records.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  const lastDate = new Date(records[0].date + 'T00:00:00');
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.floor((today - lastDate) / (1000 * 60 * 60 * 24));
+}
+
+function updateCheckinDays() {
+  const el = document.getElementById('checkinDays');
+  if (!el) return;
+  const days = getDaysSinceLastCheckin();
+  if (days === null) {
+    el.textContent = '尚未盘点过';
+    el.className = 'checkin-days';
+  } else if (days === 0) {
+    el.textContent = '今天盘点过了 ✅';
+    el.className = 'checkin-days';
+  } else if (days === 1) {
+    el.textContent = '上次盘点：昨天';
+    el.className = 'checkin-days' + (days > 35 ? ' warning' : '');
+  } else if (days > 35) {
+    el.textContent = '⚠️ 上次盘点距今 ' + days + ' 天，请尽快盘点！';
+    el.className = 'checkin-days warning';
+  } else {
+    el.textContent = '上次盘点距今 ' + days + ' 天';
+    el.className = 'checkin-days';
+  }
+}
+
+// ==================== 环比对比 ====================
+
+// 获取指定月份的最终资产快照（取该月最后一条记录的 balances）
+function getMonthEndSnapshot(year, month) {
+  const mk = monthKey(year, month);
+  const records = loadRecordsByMonth(mk);
+  if (records.length === 0) return null;
+  records.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  return records[0].balances || {};
+}
+
+function getMonthlyComparison() {
+  let currSnapshot, prevSnapshot;
+  let currLabel, prevLabel;
+
+  if (statsMode === 'month') {
+    currSnapshot = getMonthEndSnapshot(statsYear, statsMonth);
+    const prevY = statsMonth === 1 ? statsYear - 1 : statsYear;
+    const prevM = statsMonth === 1 ? 12 : statsMonth - 1;
+    prevSnapshot = getMonthEndSnapshot(prevY, prevM);
+    currLabel = `${statsYear}年${statsMonth}月`;
+    prevLabel = `${prevY}年${prevM}月`;
+  } else {
+    // 年视图：取该年12月 vs 上年12月
+    currSnapshot = getMonthEndSnapshot(statsYear, 12);
+    // 如果今年12月还没有数据，取今年最后一个有数据的月
+    if (!currSnapshot) {
+      for (let m = 11; m >= 1; m--) {
+        currSnapshot = getMonthEndSnapshot(statsYear, m);
+        if (currSnapshot) break;
+      }
+    }
+    prevSnapshot = getMonthEndSnapshot(statsYear - 1, 12);
+    if (!prevSnapshot) {
+      for (let m = 11; m >= 1; m--) {
+        prevSnapshot = getMonthEndSnapshot(statsYear - 1, m);
+        if (prevSnapshot) break;
+      }
+    }
+    currLabel = `${statsYear}年`;
+    prevLabel = `${statsYear - 1}年`;
+  }
+
+  return { currSnapshot, prevSnapshot, currLabel, prevLabel };
+}
+
+function updateComparisonCards() {
+  const container = document.getElementById('comparisonCards');
+  if (!container) return;
+
+  const { currSnapshot, prevSnapshot, currLabel, prevLabel } = getMonthlyComparison();
+  if (!currSnapshot || !prevSnapshot) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const accounts = getAccounts();
+  if (accounts.length === 0) { container.innerHTML = ''; return; }
+
+  // 总资产环比
+  const currTotal = Object.values(currSnapshot).reduce((s, v) => s + v, 0);
+  const prevTotal = Object.values(prevSnapshot).reduce((s, v) => s + v, 0);
+  const totalChange = currTotal - prevTotal;
+  const totalPct = prevTotal !== 0 ? ((totalChange / prevTotal) * 100) : 0;
+
+  let html = renderCompCard('📊 总资产', currLabel, prevLabel, totalChange, totalPct);
+
+  // 各账户环比（只显示有数据的）
+  accounts.forEach(a => {
+    const curr = currSnapshot[a.id];
+    const prev = prevSnapshot[a.id];
+    if (curr !== undefined && prev !== undefined) {
+      const change = curr - prev;
+      const pct = prev !== 0 ? ((change / prev) * 100) : 0;
+      html += renderCompCard((a.emoji || '') + ' ' + a.name, currLabel, prevLabel, change, pct);
+    }
+  });
+
+  container.innerHTML = html;
+}
+
+function renderCompCard(title, currLabel, prevLabel, change, pct) {
+  const cls = change > 0 ? 'up' : (change < 0 ? 'down' : 'flat');
+  const arrow = change > 0 ? '↑' : (change < 0 ? '↓' : '→');
+  return `<div class="comp-card">
+    <div class="comp-card-title">${title} <span style="font-size:10px">环比</span></div>
+    <div class="comp-card-amount ${cls}">${fmtAmtSigned(change)} ${arrow}</div>
+    <div class="comp-card-pct ${cls}">${amountVisible ? ((pct >= 0 ? '+' : '') + pct.toFixed(2) + '%') : '**%'}</div>
+  </div>`;
 }
 
 // ==================== 数据迁移 ====================
@@ -349,6 +473,7 @@ function updateHomeView() {
   const records = loadAllRecords();
   records.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   renderRecentRecords(records.slice(0, 8), accounts);
+  updateCheckinDays();
 }
 
 function renderRecentRecords(records, accounts) {
@@ -560,12 +685,17 @@ function updateStatsView() {
     document.getElementById('statsChangePercent').textContent = '--';
     document.getElementById('statsHighest').textContent = '--';
     document.getElementById('statsLowest').textContent = '--';
+    if (pieChartInstance) { pieChartInstance.destroy(); pieChartInstance = null; }
+    const cmpCards = document.getElementById('comparisonCards');
+    if (cmpCards) cmpCards.innerHTML = '';
     return;
   }
 
   // 获取选中账户的时间线
   const timeline = getAccountTimeline(statsAccountId);
   renderLineChart(timeline);
+  renderPieChart();
+  updateComparisonCards();
 
   // 计算统计
   if (statsMode === 'month') {
@@ -787,6 +917,7 @@ function renderLineChart(timeline) {
 // ==================== 总资产折线图 ====================
 
 let totalAssetChartInstance = null;
+let pieChartInstance = null;
 
 function renderTotalAssetChart(timeline) {
   const canvas = document.getElementById('totalAssetChart');
@@ -880,6 +1011,86 @@ function renderTotalAssetChart(timeline) {
             callback: function(v) { return '¥' + (v >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0)); }
           },
           beginAtZero: false
+        }
+      }
+    }
+  });
+}
+
+// ==================== 饼图 ====================
+
+function renderPieChart() {
+  const canvas = document.getElementById('pieChart');
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  if (pieChartInstance) pieChartInstance.destroy();
+
+  const accounts = getAccounts();
+  const balances = getLatestBalances();
+  const total = Object.values(balances).reduce((s, v) => s + v, 0);
+
+  if (accounts.length === 0 || total === 0) {
+    pieChartInstance = null;
+    return;
+  }
+
+  const labels = [];
+  const data = [];
+  const colors = [
+    '#667EEA', '#764BA2', '#4A90D9', '#2ECC71', '#F39C12',
+    '#E74C3C', '#1ABC9C', '#9B59B6', '#E67E22', '#3498DB',
+    '#7F8C8D', '#F1C40F', '#E91E63', '#00BCD4', '#FF5722'
+  ];
+
+  accounts.forEach((a, i) => {
+    const val = balances[a.id] || 0;
+    if (val > 0) {
+      labels.push(a.emoji + ' ' + a.name);
+      data.push(val);
+    }
+  });
+
+  if (labels.length === 0) {
+    pieChartInstance = null;
+    return;
+  }
+
+  pieChartInstance = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: data,
+        backgroundColor: colors.slice(0, labels.length),
+        borderColor: '#fff',
+        borderWidth: 2,
+        hoverBorderWidth: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '55%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 16,
+            font: { size: 12 },
+            usePointStyle: true,
+            pointStyleWidth: 10,
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : '0';
+              return amountVisible
+                ? ` ${ctx.label}: ¥${ctx.parsed.toLocaleString('zh-CN', {minimumFractionDigits:2,maximumFractionDigits:2})} (${pct}%)`
+                : ` ${ctx.label}: ¥***.** (**%)`;
+            }
+          }
         }
       }
     }

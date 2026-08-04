@@ -78,6 +78,26 @@ input, button {
     opacity: 0.6;
 }
 
+.checkin-days {
+    font-size: 12px;
+    margin-top: 6px;
+    padding: 4px 10px;
+    border-radius: 10px;
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.85);
+}
+.checkin-days.warning {
+    background: rgba(231, 76, 60, 0.25);
+    color: #fff;
+    font-weight: 600;
+    animation: pulse-warn 2s ease-in-out infinite;
+}
+@keyframes pulse-warn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
 .sync-indicator {
     font-size: 18px;
     cursor: pointer;
@@ -541,6 +561,74 @@ input, button {
     white-space: nowrap;
 }
 .toast.show { opacity: 1; }
+
+/* ========== 盘点天数提示 ========== */
+.checkin-days {
+    font-size: 12px;
+    margin-top: 6px;
+    padding: 4px 10px;
+    border-radius: 10px;
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.85);
+}
+.checkin-days.warning {
+    background: rgba(231, 76, 60, 0.25);
+    color: #fff;
+    font-weight: 600;
+    animation: pulse-warn 2s ease-in-out infinite;
+}
+@keyframes pulse-warn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* ========== 环比对比卡片 ========== */
+.comparison-cards {
+    margin: 8px 16px;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+}
+.comp-card {
+    flex: 1;
+    min-width: 120px;
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    text-align: center;
+}
+.comp-card-title {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    white-space: nowrap;
+}
+.comp-card-amount {
+    font-size: 17px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.comp-card-pct {
+    font-size: 12px;
+    margin-top: 2px;
+    font-weight: 500;
+}
+.comp-card .up { color: var(--negative); }
+.comp-card .down { color: var(--positive); }
+.comp-card .flat { color: var(--text-secondary); }
+
+/* ========== 饼图 ========== */
+.pie-chart-wrap {
+    height: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.pie-chart-wrap canvas { width: 100% !important; height: 100% !important; }
 
 /* ========== 空状态 ========== */
 .empty-state { text-align: center; padding: 40px 16px; color: var(--text-secondary); }

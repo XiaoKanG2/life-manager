@@ -1,5 +1,8 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
+// ==================== 版本号（唯一来源，修改此处即可） ====================
+const APP_VERSION = '3.5';
+
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
 const ASSET_PREFIX = 'asset_data_';
@@ -385,6 +388,10 @@ let statsYear, statsMonth;
 
 async function init() {
   try {
+    // 注入版本号（统一来源）
+    const verEl = document.getElementById('appVersionDisplay');
+    if (verEl) verEl.textContent = APP_VERSION;
+
     migrateOldData();
     loadAmountVisible();
     const now = new Date();
@@ -1191,7 +1198,7 @@ function deleteAccount(id) {
 
 function exportData() {
   const data = {
-    version: '3.0.0',
+    version: APP_VERSION,
     exportedAt: new Date().toISOString(),
     accounts: getAccounts(),
     records: loadAllRecords()
@@ -1380,9 +1387,24 @@ async function tryRecoverSyncConfigFromIDB() {
 // ==================== Service Worker ====================
 
 function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
+  if (!('serviceWorker' in navigator)) return;
+
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    // 监听 SW 发来的消息（新版本已激活）
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'SW_UPDATED') {
+        showUpdateToast();
+      }
+    });
+  }).catch(() => {});
+}
+
+function showUpdateToast() {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = '🔄 新版本已就绪，下拉刷新即可更新';
+  toast.className = 'toast show';
+  setTimeout(() => { toast.classList.remove('show'); }, 4000);
 }
 
 // ==================== Supabase 云端同步 ====================

@@ -1,4 +1,5 @@
-const CACHE_NAME = 'asset-tracker-v3.4';
+// 缓存版本：必须与 js/app.js 中的 APP_VERSION 保持一致
+const CACHE_NAME = 'asset-tracker-v3.5';
 const ASSETS = [
     './',
     './index.html',
@@ -21,7 +22,7 @@ self.addEventListener('install', (event) => {
     self.skipWaiting();
 });
 
-// 激活：清理旧缓存
+// 激活：清理旧缓存，通知页面有新版本
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((keys) => {
@@ -29,6 +30,13 @@ self.addEventListener('activate', (event) => {
                 keys.filter((key) => key !== CACHE_NAME)
                     .map((key) => caches.delete(key))
             );
+        }).then(() => {
+            // 通知所有打开的页面：有更新可用
+            return self.clients.matchAll({ type: 'window' }).then(clients => {
+                clients.forEach(client => {
+                    client.postMessage({ type: 'SW_UPDATED' });
+                });
+            });
         })
     );
     self.clients.claim();

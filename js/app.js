@@ -1269,6 +1269,31 @@ function clearAllData() {
   showToast('所有数据已清空');
 }
 
+// ==================== 刷新缓存（清除 SW 缓存并硬性重新加载） ====================
+
+async function hardRefresh() {
+  showToast('🔄 正在清除缓存...');
+  try {
+    // 1. 清除所有 Service Worker 缓存
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map(name => caches.delete(name)));
+
+    // 2. 注销所有 Service Worker
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(reg => reg.unregister()));
+    }
+
+    // 3. 硬性重新加载（跳过缓存，强制从网络获取）
+    showToast('✅ 缓存已清除，即将刷新');
+    setTimeout(() => {
+      window.location.reload(true);
+    }, 500);
+  } catch (e) {
+    showToast('刷新失败：' + (e.message || '未知错误'));
+  }
+}
+
 // ==================== 删除盘点记录 ====================
 
 function deleteRecordAndRefresh(id) {

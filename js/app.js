@@ -383,7 +383,7 @@ let statsYear, statsMonth;
 
 // ==================== 初始化 ====================
 
-function init() {
+async function init() {
   try {
     migrateOldData();
     loadAmountVisible();
@@ -396,7 +396,19 @@ function init() {
     updateAllViews();
     updateSyncBadge();
     registerServiceWorker();
-    autoPullOnStart();
+    requestPersistentStorage();
+
+    // 尝试从 IndexedDB 恢复 syncConfig（如果 localStorage 被清除）
+    const recovered = await tryRecoverSyncConfigFromIDB();
+    if (recovered) {
+      updateSyncBadge();
+      showToast('已从备份恢复同步配置');
+      // 配置恢复后自动从云端拉取全部数据
+      await syncForcePullSilent();
+      updateAllViews();
+    } else {
+      autoPullOnStart();
+    }
   } catch (e) {
     console.error('初始化失败:', e);
   }
@@ -1287,6 +1299,84 @@ function updateAllViews() {
   if (currentPage === 'stats') updateStatsView();
 }
 
+// ==================== 持久化存储 ====================
+
+function requestPersistentStorage() {
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().then((isPersistent) => {
+      if (isPersistent) {
+        console.log('存储已标记为持久化，不会被自动清除');
+      } else {
+        console.log('持久化存储请求未被授予（部分浏览器需要用户交互后才允许）');
+      }
+    }).catch(() => {});
+  }
+}
+
+// ==================== IndexedDB 备份（syncConfig 容灾） ====================
+
+const IDB_NAME = 'asset_tracker_backup';
+const IDB_STORE = 'config_backup';
+const IDB_SYNC_CONFIG_KEY = 'sync_config';
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function idbSet(key, value) {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+  } catch (e) { console.warn('IDB 写入失败:', e); }
+}
+
+async function idbGet(key) {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => { db.close(); resolve(req.result); };
+      req.onerror = () => { db.close(); reject(req.error); };
+    });
+  } catch (e) { console.warn('IDB 读取失败:', e); return null; }
+}
+
+async function backupSyncConfigToIDB() {
+  const config = getSyncConfig();
+  if (config.url && config.key && config.syncKey) {
+    await idbSet(IDB_SYNC_CONFIG_KEY, config);
+  }
+}
+
+async function tryRecoverSyncConfigFromIDB() {
+  const localConfig = getSyncConfig();
+  if (localConfig.url && localConfig.key && localConfig.syncKey) return false;
+
+  const idbConfig = await idbGet(IDB_SYNC_CONFIG_KEY);
+  if (idbConfig && idbConfig.url && idbConfig.key && idbConfig.syncKey) {
+    console.log('从 IndexedDB 恢复 syncConfig');
+    localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(idbConfig));
+    return true;
+  }
+  return false;
+}
+
 // ==================== Service Worker ====================
 
 function registerServiceWorker() {
@@ -1307,7 +1397,10 @@ function getSyncConfig() {
   return { url: '', key: '', syncKey: '' };
 }
 
-function setSyncConfig(config) { localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config)); }
+function setSyncConfig(config) {
+  localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
+  backupSyncConfigToIDB();
+}
 
 function initSupabase() {
   // 已初始化且配置未变则复用
@@ -1361,6 +1454,28 @@ function saveSyncConfigUI() {
   } else {
     showToast('Supabase 连接失败，请检查 URL 和 Key');
   }
+}
+
+// 自定义确认弹窗（替代 confirm()，iOS PWA 独立模式下更可靠）
+function showConfirmModal(title, message) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('confirmModalOverlay');
+    document.getElementById('confirmModalTitle').textContent = title;
+    document.getElementById('confirmModalBody').textContent = message;
+    overlay.classList.add('active');
+
+    const cleanup = () => {
+      overlay.classList.remove('active');
+      document.getElementById('confirmOkBtn').removeEventListener('click', onOk);
+      document.getElementById('confirmCancelBtn').removeEventListener('click', onCancel);
+    };
+
+    const onOk = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+
+    document.getElementById('confirmOkBtn').addEventListener('click', onOk);
+    document.getElementById('confirmCancelBtn').addEventListener('click', onCancel);
+  });
 }
 
 function updateSyncBadge() {
@@ -1435,8 +1550,20 @@ async function syncPull() {
 async function syncForcePull() {
   if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
   if (!initSupabase() || !_supabaseClient) { showToast('Supabase 连接失败，请检查 CDN 是否加载'); return; }
-  if (!confirm('⚠️ 此操作将用云端数据完全覆盖本地数据（包括账户和所有盘点记录），本地未同步的修改将丢失。\n\n确定继续？')) return;
 
+  const ok = await showConfirmModal('覆盖确认', '此操作将用云端数据完全覆盖本地数据（包括账户和所有盘点记录），本地未同步的修改将丢失。\n\n确定继续？');
+  if (!ok) return;
+
+  await doForcePull(false);
+}
+
+async function syncForcePullSilent() {
+  if (!isSyncConfigured()) return;
+  if (!initSupabase() || !_supabaseClient) return;
+  await doForcePull(true);
+}
+
+async function doForcePull(silent) {
   setSyncIndicator('syncing');
   const config = getSyncConfig();
   try {
@@ -1444,7 +1571,7 @@ async function syncForcePull() {
     if (error && error.code !== 'PGRST116') throw error;
     if (!data || !data.data) {
       setSyncIndicator('synced');
-      showToast('云端暂无数据，未做任何修改');
+      if (!silent) showToast('云端暂无数据，未做任何修改');
       return;
     }
 
@@ -1467,7 +1594,6 @@ async function syncForcePull() {
         const monthRecords = loadRecordsByMonth(mk);
         monthRecords.push(r);
         monthRecords.sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
-        // 去重后保存
         const unique = [];
         const seen = new Set();
         monthRecords.forEach(rec => {
@@ -1485,10 +1611,11 @@ async function syncForcePull() {
     updateSyncBadge();
     setSyncIndicator('synced');
     updateAllViews();
-    showToast('已从云端完全恢复，本地数据已被覆盖');
+    if (!silent) showToast('已从云端完全恢复，本地数据已被覆盖');
   } catch (e) {
     setSyncIndicator('error');
-    showToast('同步失败：' + (e.message || '网络错误'));
+    console.error('doForcePull 失败:', e);
+    if (!silent) showToast('同步失败：' + (e.message || e.code || '网络错误'));
   }
 }
 
@@ -1537,7 +1664,7 @@ function setSyncIndicator(state) {
 
 // ==================== 弹窗遮罩关闭 ====================
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', function(e) {
       if (e.target === this) this.classList.remove('active');
@@ -1549,5 +1676,5 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.classList.contains('mode-tab')) changeStatsMode(e.target.dataset.mode);
   });
 
-  try { init(); } catch (e) { console.error('初始化失败:', e); }
+  try { await init(); } catch (e) { console.error('初始化失败:', e); }
 });

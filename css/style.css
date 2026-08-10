@@ -650,3 +650,49 @@ input, button {
         border-radius: 16px 16px 0 0;
     }
 }
+
+/* ========== 确认弹窗 ========== */
+.confirm-modal {
+    max-width: 320px;
+    text-align: center;
+    padding: 28px 24px 20px;
+}
+.confirm-body {
+    font-size: 15px;
+    color: var(--text);
+    margin-bottom: 24px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+.confirm-btns {
+    display: flex;
+    gap: 12px;
+}
+.confirm-btn {
+    flex: 1;
+    padding: 12px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.confirm-btn:active {
+    transform: scale(0.97);
+}
+.confirm-btn-cancel {
+    background: var(--card-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+.confirm-btn-cancel:active {
+    opacity: 0.7;
+}
+.confirm-btn-ok {
+    background: var(--danger);
+    color: #fff;
+}
+.confirm-btn-ok:active {
+    opacity: 0.85;
+}

@@ -1450,7 +1450,6 @@ function saveSyncConfigUI() {
     showToast('同步配置成功');
     updateSyncBadge();
     closeSyncModal();
-    syncPush();
   } else {
     showToast('Supabase 连接失败，请检查 URL 和 Key');
   }

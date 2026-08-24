@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '4.7';
+const APP_VERSION = '4.8';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -1457,7 +1457,7 @@ function describeSyncError(e) {
   return (msg || code) ? (msg || code) + suffix : '未知错误' + suffix;
 }
 
-// 连通性测试：直接探测 REST 端点，区分 DNS/网络/Key 问题
+// 连通性测试：用 supabase-js 客户端做一次真实轻量查询，与真实同步路径一致
 async function testSupabaseConnection() {
   const config = getSyncConfig();
   if (!config.url || !config.key) return { ok: false, msg: 'URL 或 Key 未填写' };
@@ -1471,17 +1471,23 @@ async function testSupabaseConnection() {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') {
     return { ok: false, msg: 'URL 必须以 http(s):// 开头' };
   }
+  if (!window.supabase) return { ok: false, msg: 'Supabase 库未加载，请刷新页面后重试' };
 
   try {
-    const res = await fetch(u.origin + '/rest/v1/', {
-      method: 'GET',
-      headers: { apikey: config.key },
-      cache: 'no-store'
-    });
-    if (res.status === 401 || res.status === 403) {
-      return { ok: false, msg: '服务器可达，但 API Key 无效，请重新复制 Anon Key' };
+    // 用与真实同步相同的客户端发一次查询，探测域名/网络/Key/表
+    const client = window.supabase.createClient(config.url, config.key);
+    const { error } = await client.from('sync_data').select('sync_key').limit(1);
+    // 表不存在(42P01/PGRST205)或鉴权失败(401/403)属配置问题，其余都视为连接正常
+    if (error) {
+      const code = String(error.code || '');
+      if (code === '42P01' || code === 'PGRST205' || /42p01|pgrst205/i.test(String(error.message))) {
+        return { ok: false, msg: '数据库缺少 sync_data 表，请先在 Supabase SQL Editor 中创建' };
+      }
+      if (String(error.message).match(/401|403|invalid api key|jwt|apikey/i)) {
+        return { ok: false, msg: 'API Key 无效或已失效，请到 Supabase → Settings → API 重新复制 Anon Key' };
+      }
+      // 其他错误（如缺表前的连接问题）仍视为可达，配置本身有效
     }
-    // 能拿到任何 HTTP 响应（200/404 等）都说明域名解析和服务器正常
     return { ok: true, msg: '连接正常' };
   } catch (e) {
     return { ok: false, msg: describeSyncError(e) };

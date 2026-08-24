@@ -673,8 +673,9 @@
 .bd-toast-container {
   position: fixed;
   bottom: 100px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  width: 100%;
   z-index: 400;
   display: flex;
   flex-direction: column;
@@ -683,7 +684,7 @@
   pointer-events: none;
 }
 
-.bd-toast-container .toast {
+.bd-toast-container .bd-toast {
   background: rgba(47, 47, 58, 0.92);
   color: #fff;
   padding: 10px 20px;
@@ -695,15 +696,15 @@
   max-width: 85vw;
 }
 
-.bd-toast-container .toast.success { background: rgba(81, 207, 102, 0.95); }
-.bd-toast-container .toast.error { background: rgba(229, 72, 77, 0.95); white-space: normal; line-height: 1.5; }
+.bd-toast-container .bd-toast.bd-toast-success { background: rgba(81, 207, 102, 0.95); }
+.bd-toast-container .bd-toast.bd-toast-error { background: rgba(229, 72, 77, 0.95); white-space: normal; line-height: 1.5; }
 
 @keyframes bdToastIn {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.bd-toast-container .toast.out { opacity: 0; transform: translateY(8px); transition: all 0.3s; }
+.bd-toast-container .bd-toast.out { opacity: 0; transform: translateY(8px); transition: all 0.3s; }
 
 /* ==========================================================
    响应式

@@ -486,9 +486,11 @@
         </div>
 
         <!-- ========== Toast 提示 ========== -->
-        <div class="toast" id="toast"></div>
-        <div class="bd-toast-container" id="toastContainer"></div>
     </div>
+
+    <!-- ========== Toast 提示（置于 app 之外，避免 containing block 干扰） ========== -->
+    <div class="toast" id="toast"></div>
+    <div class="bd-toast-container" id="toastContainer"></div>
 
     <script src="lib/supabase.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>

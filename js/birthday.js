@@ -826,7 +826,8 @@ const UI = {
   showToast(message, type = '') {
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
-    toast.className = 'toast ' + type;
+    // 用独立类名 bd-toast，避免与 accounting.css 全局 .toast 的 position/top/left 冲突
+    toast.className = 'bd-toast' + (type ? ' bd-toast-' + type : '');
     toast.textContent = message;
     container.appendChild(toast);
     const duration = type === 'error' ? 4500 : 2200;

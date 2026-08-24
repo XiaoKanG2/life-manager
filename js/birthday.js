@@ -537,9 +537,8 @@ const UI = {
           : solarStr;
         sub.appendChild(document.createTextNode(display));
       } else {
+        // 公历：只显示公历日期，不再补充农历换算
         sub.appendChild(document.createTextNode(solarStr));
-        const l = LunarHelper.solarToLunar(next.getFullYear(), next.getMonth() + 1, next.getDate());
-        if (l) sub.appendChild(document.createTextNode(`（农历${l.isLeap ? '闰' : ''}${LunarHelper.monthName(l.lunarMonth)}${LunarHelper.dayName(l.lunarDay)}）`));
       }
       if (person.note) {
         sub.appendChild(document.createTextNode(` · ${person.note}`));

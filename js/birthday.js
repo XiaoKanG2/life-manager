@@ -531,8 +531,9 @@ const UI = {
         tag.className = 'bd-lunar-tag';
         tag.textContent = '农历';
         sub.appendChild(tag);
-        // 精简：只显示对应公历日期（标签已标明农历类型），去掉括号里的农历换算，尽量单行不换行
-        sub.appendChild(document.createTextNode(solarStr));
+        // 农历生日：展示农历日期本身（如 腊月廿九），文案短、天然单行
+        const lunarText = (person.isLeap ? '闰' : '') + LunarHelper.monthName(person.birthMonth) + LunarHelper.dayName(person.birthDay);
+        sub.appendChild(document.createTextNode(lunarText));
       } else {
         // 公历：只显示公历日期，不再补充农历换算
         sub.appendChild(document.createTextNode(solarStr));

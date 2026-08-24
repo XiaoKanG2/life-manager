@@ -531,11 +531,8 @@ const UI = {
         tag.className = 'bd-lunar-tag';
         tag.textContent = '农历';
         sub.appendChild(tag);
-        const lunarInfo = LunarHelper.solarToLunar(next.getFullYear(), next.getMonth() + 1, next.getDate());
-        const display = lunarInfo
-          ? `${solarStr}（${lunarInfo.isLeap ? '闰' : ''}${LunarHelper.monthName(lunarInfo.lunarMonth)}${LunarHelper.dayName(lunarInfo.lunarDay)}）`
-          : solarStr;
-        sub.appendChild(document.createTextNode(display));
+        // 精简：只显示对应公历日期（标签已标明农历类型），去掉括号里的农历换算，尽量单行不换行
+        sub.appendChild(document.createTextNode(solarStr));
       } else {
         // 公历：只显示公历日期，不再补充农历换算
         sub.appendChild(document.createTextNode(solarStr));

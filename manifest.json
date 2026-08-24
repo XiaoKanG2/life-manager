@@ -1,7 +1,7 @@
 {
-    "name": "资产盘点 - 个人资产管理",
-    "short_name": "资产盘点",
-    "description": "每月资产盘点，记录账户余额变化，折线图跟踪资产趋势",
+    "name": "生活管家 - 资产盘点 + 生日提醒",
+    "short_name": "生活管家",
+    "description": "每月资产盘点 + 人员生日管理与提醒，一站式管理",
     "start_url": "./index.html",
     "display": "standalone",
     "background_color": "#F5F6FA",
@@ -9,13 +9,13 @@
     "orientation": "portrait",
     "icons": [
         {
-            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='40' fill='%234A90D9'/%3E%3Ctext x='96' y='115' font-size='90' text-anchor='middle' fill='white'%3E💰%3C/text%3E%3C/svg%3E",
+            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='40' fill='%234A90D9'/%3E%3Ctext x='96' y='115' font-size='90' text-anchor='middle' fill='white'%3E📋%3C/text%3E%3C/svg%3E",
             "sizes": "192x192",
             "type": "image/svg+xml",
             "purpose": "any"
         },
         {
-            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%234A90D9'/%3E%3Ctext x='256' y='310' font-size='240' text-anchor='middle' fill='white'%3E💰%3C/text%3E%3C/svg%3E",
+            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%234A90D9'/%3E%3Ctext x='256' y='310' font-size='240' text-anchor='middle' fill='white'%3E📋%3C/text%3E%3C/svg%3E",
             "sizes": "512x512",
             "type": "image/svg+xml",
             "purpose": "any"

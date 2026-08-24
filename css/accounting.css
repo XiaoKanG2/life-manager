@@ -562,6 +562,7 @@ input, button {
     white-space: nowrap;
 }
 .toast.show { opacity: 1; }
+.toast.error { white-space: normal; max-width: 86vw; line-height: 1.5; background: rgba(180,40,40,0.92); }
 
 /* ========== 盘点天数提示 ========== */
 .checkin-days {

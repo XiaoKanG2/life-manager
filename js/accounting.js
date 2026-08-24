@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '3.5';
+const APP_VERSION = '4.7';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -434,6 +434,7 @@ function switchPage(page) {
 
   if (page === 'home') updateHomeView();
   if (page === 'stats') updateStatsView();
+  if (page === 'birthday' && typeof UI !== 'undefined' && UI.render) UI.render();
 }
 
 // ==================== 首页视图 ====================
@@ -1194,77 +1195,24 @@ function deleteAccount(id) {
   showToast('账户已删除');
 }
 
-// ==================== 数据导入/导出 ====================
-
-function exportData() {
-  const data = {
-    version: APP_VERSION,
-    exportedAt: new Date().toISOString(),
-    accounts: getAccounts(),
-    records: loadAllRecords()
-  };
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `资产盘点数据_${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('数据导出成功');
-}
-
-function importData() {
-  document.getElementById('importFile').click();
-}
-
-function handleImport(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      const data = JSON.parse(e.target.result);
-      if (!data.accounts || !Array.isArray(data.accounts)) {
-        showToast('无效的数据文件');
-        return;
-      }
-
-      // 合并账户
-      const existingAccounts = getAccounts();
-      const existingIds = new Set(existingAccounts.map(a => a.id));
-      const newAccounts = data.accounts.filter(a => !existingIds.has(a.id));
-      if (newAccounts.length > 0) {
-        saveAccounts([...existingAccounts, ...newAccounts]);
-      }
-
-      // 合并盘��记录
-      if (data.records && Array.isArray(data.records)) {
-        const existingRecords = loadAllRecords();
-        const existingRecordIds = new Set(existingRecords.map(r => r.id));
-        const newRecords = data.records.filter(r => !existingRecordIds.has(r.id));
-        newRecords.forEach(r => saveRecord(r));
-      }
-
-      updateAllViews();
-      showToast(`导入成功：${data.accounts.length} 个账户`);
-    } catch (err) {
-      showToast('数据解析失败，请检查文件格式');
-    }
-  };
-  reader.readAsText(file);
-  event.target.value = '';
-}
-
 function clearAllData() {
-  if (!confirm('⚠️ 确定要清空所有数据吗？此操作不可恢复！')) return;
+  if (!confirm('⚠️ 确定要清空所有数据吗？\n（包括资产盘点和生日管家数据）\n此操作不可恢复！')) return;
   if (!confirm('再次确认：真的要删除所有数据吗？')) return;
 
+  // 资产盘点数据
   const months = getMonthsWithData();
   months.forEach(mk => localStorage.removeItem(storageKey(mk)));
   localStorage.removeItem(META_KEY);
   localStorage.removeItem(ACCOUNT_KEY);
+  // 生日管家数据
+  localStorage.removeItem('birthday_app_persons_v1');
+  localStorage.removeItem('birthday_app_settings_v1');
+  localStorage.removeItem('birthday_app_reminder_log_v1');
   updateAllViews();
+  if (typeof PersonManager !== 'undefined') {
+    PersonManager.persons = [];
+    if (typeof UI !== 'undefined' && UI.render) UI.render();
+  }
   autoPushOnChange();
   showToast('所有数据已清空');
 }
@@ -1305,13 +1253,13 @@ function deleteRecordAndRefresh(id) {
 
 // ==================== Toast ====================
 
-function showToast(msg) {
+function showToast(msg, type, duration) {
   const toast = document.getElementById('toast');
   if (!toast) return;
   toast.textContent = msg;
-  toast.classList.add('show');
+  toast.className = 'toast show' + (type === 'error' ? ' error' : '');
   clearTimeout(toast._timeout);
-  toast._timeout = setTimeout(() => toast.classList.remove('show'), 1800);
+  toast._timeout = setTimeout(() => { toast.classList.remove('show'); toast.classList.remove('error'); }, duration || (type === 'error' ? 4500 : 1800));
 }
 
 // ==================== 工具函数 ====================
@@ -1473,6 +1421,82 @@ function isSyncConfigured() {
   return !!(config.url && config.key && config.syncKey);
 }
 
+// ==================== 同步错误诊断 ====================
+
+// 把 Supabase/网络错误翻译成用户能看懂的提示
+function describeSyncError(e) {
+  const msg = String((e && (e.message || e.error_description)) || e || '');
+  const code = String((e && e.code) || '');
+  const lower = (msg + ' ' + code).toLowerCase();
+  const config = getSyncConfig();
+  let host = '';
+  try { if (config.url) host = new URL(config.url).hostname; } catch (err) {}
+  const suffix = host ? '（' + host + '）' : '';
+
+  if (lower.includes('err_name_not_resolved')) {
+    return '域名解析失败：URL 可能填错，或 Supabase 项目已被删除/暂停' + suffix;
+  }
+  if (lower.includes('err_internet_diserrupted') || lower.includes('err_internet_disconnected') || lower.includes('networkerror')) {
+    return '设备未联网或网络不可用' + suffix;
+  }
+  if (lower.includes('err_timed_out') || lower.includes('timeout')) {
+    return '连接超时：网络不稳定，请稍后重试' + suffix;
+  }
+  if (lower.includes('invalid url') || lower.includes('invalidurl')) {
+    return 'URL 格式错误，应形如 https://xxxxx.supabase.co（注意 https:// 开头、无多余空格）';
+  }
+  if (lower.includes('failed to fetch') || lower.includes('fetch failed') || lower.includes('load failed')) {
+    return '无法连接服务器：域名解析失败或网络不通。请检查 URL 是否填错、Supabase 项目是否还存在' + suffix;
+  }
+  if (lower.includes('401') || lower.includes('403') || lower.includes('jwt') || lower.includes('apikey')) {
+    return 'API Key 无效或已失效，请到 Supabase → Settings → API 重新复制 Anon Key' + suffix;
+  }
+  if (lower.includes('42p01') || lower.includes('pgrst205')) {
+    return '数据库缺少 sync_data 表，请先在 Supabase SQL Editor 中创建' + suffix;
+  }
+  return (msg || code) ? (msg || code) + suffix : '未知错误' + suffix;
+}
+
+// 连通性测试：直接探测 REST 端点，区分 DNS/网络/Key 问题
+async function testSupabaseConnection() {
+  const config = getSyncConfig();
+  if (!config.url || !config.key) return { ok: false, msg: 'URL 或 Key 未填写' };
+
+  let u;
+  try {
+    u = new URL(config.url);
+  } catch (e) {
+    return { ok: false, msg: 'URL 格式错误，应形如 https://xxxxx.supabase.co' };
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    return { ok: false, msg: 'URL 必须以 http(s):// 开头' };
+  }
+
+  try {
+    const res = await fetch(u.origin + '/rest/v1/', {
+      method: 'GET',
+      headers: { apikey: config.key },
+      cache: 'no-store'
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, msg: '服务器可达，但 API Key 无效，请重新复制 Anon Key' };
+    }
+    // 能拿到任何 HTTP 响应（200/404 等）都说明域名解析和服务器正常
+    return { ok: true, msg: '连接正常' };
+  } catch (e) {
+    return { ok: false, msg: describeSyncError(e) };
+  }
+}
+
+// 校验 URL 格式（拦截占位符和常见拼写错误）
+function validateSyncUrl(url) {
+  const t = url.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(t)) return 'URL 必须以 https:// 开头';
+  if (/^https?:\/\/x+\.supabase\.co$/i.test(t)) return '这还是占位符，请填入你自己的 Supabase 项目地址';
+  if (!/^https?:\/\/[a-z0-9][a-z0-9-]*\.[a-z0-9.-]+\.?[a-z]{2,}.*$/i.test(t)) return '域名格式不正确';
+  return null;
+}
+
 function openSyncModal() {
   const config = getSyncConfig();
   document.getElementById('supabaseUrl').value = config.url || '';
@@ -1490,16 +1514,31 @@ function saveSyncConfigUI() {
   const key = document.getElementById('supabaseKey').value.trim();
   const syncKey = document.getElementById('syncKey').value.trim();
   if (!url || !key || !syncKey) { showToast('请填写完整的配置信息'); return; }
-  setSyncConfig({ url, key, syncKey });
+
+  const urlErr = validateSyncUrl(url);
+  if (urlErr) { showToast(urlErr); return; }
+
+  setSyncConfig({ url: url.replace(/\/+$/, ''), key, syncKey });
   // 重置客户端，以便用新配置重新初始化
   _supabaseClient = null;
-  if (initSupabase()) {
-    showToast('同步配置成功');
-    updateSyncBadge();
-    closeSyncModal();
-  } else {
-    showToast('Supabase 连接失败，请检查 URL 和 Key');
+
+  if (!window.supabase) {
+    showToast('Supabase 库未加载，请刷新页面后重试');
+    return;
   }
+
+  // 先做连通性测试，给出精确诊断
+  showToast('正在测试连接…');
+  testSupabaseConnection().then(({ ok, msg }) => {
+    if (ok) {
+      showToast('同步配置成功，连接正常 ✅');
+      updateSyncBadge();
+      closeSyncModal();
+    } else {
+      showToast('配置已保存，但连接失败：' + msg, 'error');
+      updateSyncBadge();
+    }
+  });
 }
 
 // 自定义确认弹窗（替代 confirm()，iOS PWA 独立模式下更可靠）
@@ -1574,30 +1613,47 @@ function autoPushOnChange() {
 
 async function syncPush() {
   if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
-  if (!initSupabase() || !_supabaseClient) { showToast('Supabase 连接失败，请检查 CDN 是否加载'); return; }
+  if (!initSupabase() || !_supabaseClient) { showToast('Supabase 初始化失败，请刷新页面重试', 'error'); return; }
   setSyncIndicator('syncing');
   try { await doPush(); setSyncIndicator('synced'); showToast('数据已上传到云端'); }
-  catch (e) { setSyncIndicator('error'); showToast('上传失败：' + (e.message || '网络错误')); }
+  catch (e) { setSyncIndicator('error'); showToast('上传失败：' + describeSyncError(e), 'error'); }
 }
 
 async function syncPull() {
   if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
-  if (!initSupabase() || !_supabaseClient) { showToast('Supabase 连接失败，请检查 CDN 是否加载'); return; }
+  if (!initSupabase() || !_supabaseClient) { showToast('Supabase 初始化失败，请刷新页面重试', 'error'); return; }
   setSyncIndicator('syncing');
   const config = getSyncConfig();
   try {
+    // 下载资产数据
     const { data, error } = await _supabaseClient.from('sync_data').select('data, updated_at').eq('sync_key', config.syncKey).single();
     if (error && error.code !== 'PGRST116') throw error;
-    if (data && data.data) { mergeCloudData(data.data); updateAllViews(); setSyncIndicator('synced'); showToast('数据已从云端同步'); }
-    else { setSyncIndicator('synced'); showToast('云端暂无数据'); }
-  } catch (e) { setSyncIndicator('error'); showToast('下载失败：' + (e.message || '网络错误')); }
+    let pulledAsset = false;
+    if (data && data.data) { mergeCloudData(data.data); updateAllViews(); pulledAsset = true; }
+
+    // 同时下载生日数据
+    let pulledBirthday = false;
+    if (typeof BirthdaySync !== 'undefined' && BirthdaySync.isConfigured()) {
+      const bKey = config.syncKey + '__birthday';
+      const { data: bData, error: bErr } = await _supabaseClient.from('sync_data').select('data, updated_at').eq('sync_key', bKey).single();
+      if (bErr && bErr.code !== 'PGRST116') throw bErr;
+      if (bData && bData.data && Array.isArray(bData.data.persons)) {
+        BirthdaySync.mergePersons(bData.data.persons);
+        pulledBirthday = true;
+      }
+    }
+
+    setSyncIndicator('synced');
+    if (pulledAsset || pulledBirthday) showToast('资产与生日数据已同步 ☁️');
+    else showToast('云端暂无数据');
+  } catch (e) { setSyncIndicator('error'); showToast('下载失败：' + describeSyncError(e), 'error'); }
 }
 
 async function syncForcePull() {
   if (!isSyncConfigured()) { showToast('请先配置云端同步'); return; }
   if (!initSupabase() || !_supabaseClient) { showToast('Supabase 连接失败，请检查 CDN 是否加载'); return; }
 
-  const ok = await showConfirmModal('覆盖确认', '此操作将用云端数据完全覆盖本地数据（包括账户和所有盘点记录），本地未同步的修改将丢失。\n\n确定继续？');
+  const ok = await showConfirmModal('覆盖确认', '此操作将用云端数据完全覆盖本地数据（包括账户、所有盘点记录和生日记录），本地未同步的修改将丢失。\n\n确定继续？');
   if (!ok) return;
 
   await doForcePull(false);
@@ -1654,27 +1710,52 @@ async function doForcePull(silent) {
     if (newAccounts.length > 0) statsAccountId = newAccounts[0].id;
     else statsAccountId = null;
 
+    // 以云端为准覆盖生日数据
+    let birthdayReplaced = false;
+    if (typeof BirthdaySync !== 'undefined' && BirthdaySync.isConfigured()) {
+      const bKey = config.syncKey + '__birthday';
+      const { data: bData, error: bErr } = await _supabaseClient.from('sync_data').select('data').eq('sync_key', bKey).single();
+      if (bErr && bErr.code !== 'PGRST116') throw bErr;
+      if (bData && bData.data && Array.isArray(bData.data.persons)) {
+        BirthdaySync.forceReplace(bData.data.persons);
+        birthdayReplaced = true;
+      }
+    }
+
     updateSyncBadge();
     setSyncIndicator('synced');
     updateAllViews();
-    if (!silent) showToast('已从云端完全恢复，本地数据已被覆盖');
+    if (!silent) showToast(birthdayReplaced ? '已从云端完全恢复（含生日），本地数据已被覆盖' : '已从云端完全恢复，本地数据已被覆盖');
   } catch (e) {
     setSyncIndicator('error');
     console.error('doForcePull 失败:', e);
-    if (!silent) showToast('同步失败：' + (e.message || e.code || '网络错误'));
+    if (!silent) showToast('同步失败：' + describeSyncError(e), 'error');
   }
 }
 
 async function doPush() {
   const config = getSyncConfig();
+  const now = new Date().toISOString();
   const payload = {
     sync_key: config.syncKey,
     data: { accounts: getAccounts(), records: loadAllRecords() },
-    updated_at: new Date().toISOString()
+    updated_at: now
   };
   if (!_supabaseClient) throw new Error('Supabase 客户端未初始化');
   const { error } = await _supabaseClient.from('sync_data').upsert(payload, { onConflict: 'sync_key' });
   if (error) throw error;
+
+  // 同时上传生日数据（独立 sync_key）
+  if (typeof BirthdaySync !== 'undefined' && BirthdaySync.isConfigured()) {
+    const birthdayKey = config.syncKey + '__birthday';
+    const bPayload = {
+      sync_key: birthdayKey,
+      data: { persons: BirthdaySync.getPersons() },
+      updated_at: now
+    };
+    const { error: bErr } = await _supabaseClient.from('sync_data').upsert(bPayload, { onConflict: 'sync_key' });
+    if (bErr) throw bErr;
+  }
 }
 
 function mergeCloudData(cloudData) {

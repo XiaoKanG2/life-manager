@@ -1,13 +1,16 @@
-// 缓存版本：必须与 js/app.js 中的 APP_VERSION 保持一致
-const CACHE_NAME = 'asset-tracker-v3.5';
+// 缓存版本：必须与 js/accounting.js 中的 APP_VERSION 保持一致
+const CACHE_NAME = 'life-manager-v4.7';
 const ASSETS = [
     './',
     './index.html',
-    './css/style.css',
-    './js/app.js',
+    './css/accounting.css',
+    './css/birthday.css',
+    './js/accounting.js',
+    './js/birthday.js',
     './manifest.json',
-    'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
-    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js'
+    './lib/lunar.min.js',
+    './lib/supabase.min.js',
+    './lib/chart.umd.min.js'
 ];
 
 // 安装：预缓存核心资源
@@ -31,7 +34,6 @@ self.addEventListener('activate', (event) => {
                     .map((key) => caches.delete(key))
             );
         }).then(() => {
-            // 通知所有打开的页面：有更新可用
             return self.clients.matchAll({ type: 'window' }).then(clients => {
                 clients.forEach(client => {
                     client.postMessage({ type: 'SW_UPDATED' });
@@ -47,12 +49,11 @@ self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
     const url = event.request.url;
 
-    // 跳过 chrome-extension
     if (url.startsWith('chrome-extension://')) return;
 
-    // Supabase API 请求：直接走网络，不缓存（防止同步数据过时）
+    // Supabase API 请求：直接走网络
     if (url.includes('supabase.co')) {
-        return; // 不拦截，直接走浏览器默认网络请求
+        return;
     }
 
     // App 静态资源：缓存优先 + 网络回退

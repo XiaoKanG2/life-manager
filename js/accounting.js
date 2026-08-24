@@ -40,7 +40,7 @@ function updateEyeIcon() {
     el.title = '点击隐藏金额';
   } else {
     el.textContent = '🙈';
-    el.className = 'eye-toggle hidden';
+    el.className = 'eye-toggle off';
     el.title = '点击显示金额';
   }
 }

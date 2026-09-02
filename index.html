@@ -277,7 +277,13 @@
                     </div>
                     <div class="form-row">
                         <label class="form-label">班级</label>
-                        <input type="text" class="note-input" id="schCourseClass" placeholder="如：3年级8班" maxlength="20">
+                        <select class="note-input" id="schCourseClass" onchange="Schedule.onClassChange()"></select>
+                        <input type="text" class="note-input" id="schCourseClassCustom" placeholder="输入班级名称，如：3年级8班" maxlength="20" style="display:none;margin-top:8px">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">机房</label>
+                        <select class="note-input" id="schCourseRoom" onchange="Schedule.onRoomChange()"></select>
+                        <input type="text" class="note-input" id="schCourseRoomCustom" placeholder="输入机房号，如：④" maxlength="6" style="display:none;margin-top:8px">
                     </div>
                     <div class="sync-actions" id="schDelRow" style="display:none">
                         <button class="sync-btn sync-btn-danger" onclick="Schedule.deleteCourse()">🗑️ 删除该课程</button>

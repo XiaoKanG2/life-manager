@@ -186,3 +186,18 @@ body.sch-dragging .sch-cell.sch-empty {
     margin-bottom: 12px;
     text-align: center;
 }
+
+/* 班级下拉与机房输入 */
+select.note-input {
+    appearance: none;
+    -webkit-appearance: none;
+    border: none;
+    outline: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 36px;
+}
+select.note-input:invalid,
+select.note-input option[value=""] { color: #999; }
+#schCourseRoom { border: none; outline: none; }

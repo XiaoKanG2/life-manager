@@ -1,8 +1,8 @@
 // ==================== 课表模块 ====================
 // 数据模型：
-//   schedule_template  → 模板周课表 { 'd1_p1': {name, cls}, ... }（每周初始化的基准）
+//   schedule_template  → 模板周课表 { 'd1_p1': {name, cls, room}, ... }（每周初始化的基准）
 //   schedule_weeks     → 周实例 { 'YYYY-MM-DD(周一)': { slot: course } }，查看某周时若不存在则自动从模板初始化
-//   schedule_last_input → 上次添加课程输入 { name, cls }（记忆，方便连续添加）
+//   schedule_last_input → 上次添加课程输入 { name, cls, room }（记忆，方便连续添加）
 // slot 格式：d{1-5}_p{1-7}（星期 x 节次）
 
 const Schedule = (function () {
@@ -33,25 +33,50 @@ const Schedule = (function () {
     { after: 7, time: '15:15~15:30', label: '眼保健操 / 间餐时间' }
   ];
 
-  // 初始模板（来自用户课表截图：信息科技/编程课）
+  // 初始模板（来自用户机房排课表截图：信息科技/编程课，room = 机房号）
   const DEFAULT_TEMPLATE = {
-    d1_p7: { name: '信息科技/编程', cls: '4年级7班' },
-    d2_p1: { name: '信息科技/编程', cls: '3年级8班' },
-    d2_p6: { name: '信息科技/编程', cls: '4年级7班' },
-    d2_p7: { name: '信息科技/编程', cls: '3年级5班' },
-    d3_p1: { name: '信息科技/编程', cls: '3年级6班' },
-    d3_p2: { name: '信息科技/编程', cls: '4年级8班' },
-    d3_p4: { name: '信息科技/编程', cls: '4年级6班' },
-    d3_p5: { name: '信息科技/编程', cls: '3年级1班' },
-    d4_p1: { name: '信息科技/编程', cls: '4年级8班' },
-    d4_p3: { name: '信息科技/编程', cls: '3年级9班' },
-    d4_p4: { name: '信息科技/编程', cls: '3年级10班' },
-    d4_p6: { name: '信息科技/编程', cls: '3年级4班' },
-    d5_p1: { name: '信息科技/编程', cls: '3年级7班' },
-    d5_p2: { name: '信息科技/编程', cls: '4年级6班' },
-    d5_p5: { name: '信息科技/编程', cls: '3年级2班' },
-    d5_p6: { name: '信息科技/编程', cls: '3年级3班' }
+    d1_p7: { name: '信息科技/编程', cls: '4年级7班', room: '②' },
+    d2_p1: { name: '信息科技/编程', cls: '3年级8班', room: '②' },
+    d2_p6: { name: '信息科技/编程', cls: '4年级7班', room: '②' },
+    d2_p7: { name: '信息科技/编程', cls: '3年级5班', room: '①' },
+    d3_p1: { name: '信息科技/编程', cls: '3年级6班', room: '①' },
+    d3_p2: { name: '信息科技/编程', cls: '4年级8班', room: '①' },
+    d3_p4: { name: '信息科技/编程', cls: '4年级6班', room: '②' },
+    d3_p5: { name: '信息科技/编程', cls: '3年级1班', room: '②' },
+    d4_p1: { name: '信息科技/编程', cls: '4年级8班', room: '②' },
+    d4_p3: { name: '信息科技/编程', cls: '3年级9班', room: '①' },
+    d4_p4: { name: '信息科技/编程', cls: '3年级10班', room: '①' },
+    d4_p6: { name: '信息科技/编程', cls: '3年级4班', room: '①' },
+    d5_p1: { name: '信息科技/编程', cls: '3年级7班', room: '③' },
+    d5_p2: { name: '信息科技/编程', cls: '4年级6班', room: '②' },
+    d5_p5: { name: '信息科技/编程', cls: '3年级2班', room: '②' },
+    d5_p6: { name: '信息科技/编程', cls: '3年级3班', room: '③' }
   };
+
+  // 旧数据迁移：为缺少机房号的课程按「同位置同班级」补充默认机房号
+  // （仅当该格子的班级与默认模板一致时才补，避免覆盖用户手动调整过的课表）
+  function migrateRoomData() {
+    function fill(store) {
+      let n = 0;
+      Object.keys(DEFAULT_TEMPLATE).forEach(function (slot) {
+        const def = DEFAULT_TEMPLATE[slot];
+        const cur = store[slot];
+        if (cur && !cur.room && cur.cls === def.cls) {
+          cur.room = def.room;
+          n++;
+        }
+      });
+      return n;
+    }
+    const t = loadJSON(TEMPLATE_KEY, null);
+    if (t && fill(t) > 0) saveJSON(TEMPLATE_KEY, t);
+    const weeks = loadJSON(WEEKS_KEY, {});
+    let weekChanged = false;
+    Object.keys(weeks).forEach(function (wk) {
+      if (fill(weeks[wk]) > 0) weekChanged = true;
+    });
+    if (weekChanged) saveJSON(WEEKS_KEY, weeks);
+  }
 
   let templateMode = false;
   let drag = null;            // 拖拽状态
@@ -265,10 +290,10 @@ const Schedule = (function () {
     name.textContent = course.name;
     el.appendChild(name);
 
-    if (course.cls) {
+    if (course.cls || course.room) {
       const cls = document.createElement('span');
       cls.className = 'sch-course-cls';
-      cls.textContent = course.cls;
+      cls.textContent = (course.cls || '') + (course.room ? ' ' + course.room : '');
       el.appendChild(cls);
     }
 
@@ -292,14 +317,16 @@ const Schedule = (function () {
     if (course) {
       titleEl.textContent = '课程信息';
       nameInput.value = course.name || '';
-      clsInput.value = course.cls || '';
+      fillClassOptions(course.cls || '');
+      fillRoomOptions(course.room || '');
       delRow.style.display = 'block';
       saveBtn.textContent = '保存';
     } else {
       titleEl.textContent = '添加课程';
-      const last = loadJSON(LAST_INPUT_KEY, { name: '信息科技/编程', cls: '' });
+      const last = loadJSON(LAST_INPUT_KEY, { name: '信息科技/编程', cls: '', room: '' });
       nameInput.value = last.name || '';
-      clsInput.value = last.cls || '';
+      fillClassOptions(last.cls || '');
+      fillRoomOptions(last.room || '');
       delRow.style.display = 'none';
       saveBtn.textContent = '添加';
     }
@@ -307,6 +334,107 @@ const Schedule = (function () {
     const slotLabel = slotLabelOf(slot);
     document.getElementById('schModalSlot').textContent = slotLabel;
     document.getElementById('schCourseModal').classList.add('active');
+  }
+
+  // 班级下拉：选项 = 模板 + 各周实例中出现过的班级 + 当前值，最后附「自定义」入口
+  function fillClassOptions(selectedVal) {
+    const sel = document.getElementById('schCourseClass');
+    const customInput = document.getElementById('schCourseClassCustom');
+    const found = [];
+    function add(v) { if (v && found.indexOf(v) === -1) found.push(v); }
+
+    const t = getTemplate();
+    Object.keys(t).forEach(function (s) { add(t[s].cls); });
+    const weeks = getWeeks();
+    Object.keys(weeks).forEach(function (wk) {
+      const w = weeks[wk];
+      Object.keys(w).forEach(function (s) { add(w[s].cls); });
+    });
+    add(selectedVal);
+    add((loadJSON(LAST_INPUT_KEY, {}) || {}).cls);
+
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = '请选择班级';
+    sel.appendChild(ph);
+    found.forEach(function (v) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v;
+      sel.appendChild(o);
+    });
+    const co = document.createElement('option');
+    co.value = '__custom__';
+    co.textContent = '✏️ 其他班级（手动输入）';
+    sel.appendChild(co);
+
+    sel.value = selectedVal || '';
+    customInput.style.display = 'none';
+    customInput.value = sel.value === '__custom__' ? (selectedVal || '') : '';
+    if (sel.value === '__custom__') customInput.style.display = 'block';
+  }
+
+  function onClassSelectChange() {
+    const sel = document.getElementById('schCourseClass');
+    const customInput = document.getElementById('schCourseClassCustom');
+    if (sel.value === '__custom__') {
+      customInput.style.display = 'block';
+      customInput.focus();
+    } else {
+      customInput.style.display = 'none';
+    }
+  }
+
+  // 机房下拉：选项 = 模板 + 各周实例中出现过的机房 + 常见机房号 + 当前值，最后附「自定义」入口
+  function fillRoomOptions(selectedVal) {
+    const sel = document.getElementById('schCourseRoom');
+    const customInput = document.getElementById('schCourseRoomCustom');
+    const found = [];
+    function add(v) { if (v && found.indexOf(v) === -1) found.push(v); }
+
+    const t = getTemplate();
+    Object.keys(t).forEach(function (s) { add(t[s].room); });
+    const weeks = getWeeks();
+    Object.keys(weeks).forEach(function (wk) {
+      const w = weeks[wk];
+      Object.keys(w).forEach(function (s) { add(w[s].room); });
+    });
+    ['①', '②', '③', '④', '⑤'].forEach(add);
+    add(selectedVal);
+    add((loadJSON(LAST_INPUT_KEY, {}) || {}).room);
+
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = '请选择机房（可留空）';
+    sel.appendChild(ph);
+    found.forEach(function (v) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v;
+      sel.appendChild(o);
+    });
+    const co = document.createElement('option');
+    co.value = '__custom__';
+    co.textContent = '✏️ 其他机房（手动输入）';
+    sel.appendChild(co);
+
+    sel.value = selectedVal || '';
+    customInput.style.display = 'none';
+    customInput.value = sel.value === '__custom__' ? (selectedVal || '') : '';
+    if (sel.value === '__custom__') customInput.style.display = 'block';
+  }
+
+  function onRoomSelectChange() {
+    const sel = document.getElementById('schCourseRoom');
+    const customInput = document.getElementById('schCourseRoomCustom');
+    if (sel.value === '__custom__') {
+      customInput.style.display = 'block';
+      customInput.focus();
+    } else {
+      customInput.style.display = 'none';
+    }
   }
 
   function slotLabelOf(slot) {
@@ -323,13 +451,18 @@ const Schedule = (function () {
   function saveCourse() {
     if (!modalCtx) return;
     const name = document.getElementById('schCourseName').value.trim();
-    const cls = document.getElementById('schCourseClass').value.trim();
+    const clsSel = document.getElementById('schCourseClass');
+    let cls = clsSel.value;
+    if (cls === '__custom__') cls = document.getElementById('schCourseClassCustom').value.trim();
+    const roomSel = document.getElementById('schCourseRoom');
+    let room = roomSel.value;
+    if (room === '__custom__') room = document.getElementById('schCourseRoomCustom').value.trim();
     if (!name) { showToast('请输入课程名称'); return; }
 
     const data = getData(modalCtx.weekKey);
-    data[modalCtx.slot] = { name: name, cls: cls };
+    data[modalCtx.slot] = { name: name, cls: cls, room: room };
     saveData(modalCtx.weekKey, data);
-    saveJSON(LAST_INPUT_KEY, { name: name, cls: cls });
+    saveJSON(LAST_INPUT_KEY, { name: name, cls: cls, room: room });
     showToast('已保存');
     closeModal();
     render();
@@ -561,9 +694,14 @@ const Schedule = (function () {
     openModal: openModal,
     closeModal: closeModal,
     saveCourse: saveCourse,
-    deleteCourse: deleteCourse
+    deleteCourse: deleteCourse,
+    onClassChange: onClassSelectChange,
+    onRoomChange: onRoomSelectChange
   };
 })();
 
 // 挂到 window，确保 inline onclick 与外部访问可靠
 window.Schedule = Schedule;
+
+// 初始化：旧数据补充机房号（班级下拉切换用 inline onchange 绑定）
+migrateRoomData();

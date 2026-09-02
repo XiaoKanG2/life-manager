@@ -413,7 +413,7 @@ input, button {
 }
 .month-nav-btn:active { background: var(--primary); color: #fff; }
 
-/* 账���选择 chip */
+/* 账户选择 chip */
 .stats-account-selector {
     display: flex;
     gap: 8px;

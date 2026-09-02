@@ -1,0 +1,188 @@
+/* ========== 课表页 ========== */
+
+.sch-tip {
+    font-size: 11px;
+    color: #999;
+    padding: 8px 16px 0;
+    line-height: 1.5;
+}
+
+.sch-week-box { margin: 10px 10px 14px; }
+
+.sch-week-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 6px 6px;
+}
+.sch-week-title { font-size: 14px; font-weight: 600; }
+.sch-week-range {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 400;
+    margin-left: 6px;
+}
+.sch-week-reset {
+    font-size: 11px;
+    color: var(--primary);
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: rgba(74, 144, 217, 0.1);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.sch-week-reset:active { background: var(--primary); color: #fff; }
+
+/* 表格：grid + 缝隙色做出表格线 */
+.sch-table {
+    background: #E8ECF1;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: grid;
+    grid-template-columns: 56px repeat(5, 1fr);
+    gap: 1px;
+    padding: 1px;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.sch-corner {
+    background: #F5F7FA;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: #AAB4C0;
+}
+.sch-day-head {
+    background: #F5F7FA;
+    text-align: center;
+    padding: 7px 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: #556;
+}
+
+.sch-time-cell {
+    background: #F5F7FA;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 3px 1px;
+}
+.sch-time-cell b { font-size: 10px; color: #556; }
+.sch-time-cell span { font-size: 8px; color: #AAB4C0; }
+
+/* 可排课格子 */
+.sch-cell {
+    background: #fff;
+    min-height: 46px;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 2px;
+    position: relative;
+}
+.sch-cell.sch-empty { cursor: pointer; }
+
+/* 课程卡片 */
+.sch-course {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    background: #EAF3FC;
+    border-radius: 6px;
+    padding: 2px 1px;
+    cursor: grab;
+    overflow: hidden;
+}
+.sch-course:active { cursor: grabbing; }
+.sch-course-name {
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: #2C5F8F;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+.sch-course-cls {
+    font-size: 8px;
+    color: #7A96B0;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+/* 拖拽态 */
+.sch-course.dragging { opacity: 0.3; }
+body.sch-dragging .sch-cell.sch-empty {
+    background: #F4F9FE;
+    box-shadow: inset 0 0 0 1px #C7DCF0;
+}
+.sch-cell.drop-target {
+    background: #DCEBFA !important;
+    box-shadow: inset 0 0 0 2px var(--primary) !important;
+}
+.sch-ghost {
+    position: fixed;
+    z-index: 999;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(1.08);
+    background: #fff;
+    border: 2px solid var(--primary);
+    border-radius: 10px;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+    padding: 7px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #2C5F8F;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    max-width: 140px;
+}
+.sch-ghost-sub { font-size: 9px; font-weight: 400; color: #7A96B0; }
+
+/* 固定行（升旗 / 午休 / 眼保健操） */
+.sch-fixed-row {
+    grid-column: 1 / -1;
+    background: #FBFBF3;
+    font-size: 10px;
+    color: #9C9C74;
+    text-align: center;
+    padding: 5px 4px;
+}
+
+/* 模板切换按钮（nav-bar 右侧） */
+.nav-bar.with-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.sch-nav-btn {
+    font-size: 12px;
+    color: var(--primary);
+    padding: 5px 12px;
+    border-radius: 14px;
+    background: rgba(74, 144, 217, 0.1);
+    cursor: pointer;
+    font-weight: 500;
+}
+.sch-nav-btn.active { background: var(--primary); color: #fff; }
+
+/* 课程弹窗里的格子位置提示 */
+.sch-modal-slot {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: #F5F6FA;
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    text-align: center;
+}

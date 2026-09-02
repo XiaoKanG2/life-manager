@@ -11,6 +11,7 @@
     <title>生活管家</title>
     <link rel="stylesheet" href="css/accounting.css">
     <link rel="stylesheet" href="css/birthday.css">
+    <link rel="stylesheet" href="css/schedule.css">
     <script src="lib/lunar.min.js"></script>
 </head>
 <body>
@@ -182,6 +183,16 @@
             </div>
         </div>
 
+        <!-- ========== 课表页面 ========== -->
+        <div class="page page-schedule" id="page-schedule">
+            <div class="nav-bar with-actions">
+                <span class="nav-title">课表</span>
+                <span class="sch-nav-btn" id="schTemplateToggle" onclick="Schedule.toggleTemplateMode()">编辑模板</span>
+            </div>
+            <div class="sch-tip" id="schTip"></div>
+            <div id="schContent"></div>
+        </div>
+
         <!-- ========== 设置页 ========== -->
         <div class="page page-settings" id="page-settings">
             <div class="nav-bar">
@@ -240,9 +251,38 @@
                 <span class="tab-icon">📊</span>
                 <span class="tab-label">统计</span>
             </div>
+            <div class="tab-item" data-page="schedule" onclick="switchPage('schedule')">
+                <span class="tab-icon">📅</span>
+                <span class="tab-label">课表</span>
+            </div>
             <div class="tab-item" data-page="settings" onclick="switchPage('settings')">
                 <span class="tab-icon">⚙️</span>
                 <span class="tab-label">设置</span>
+            </div>
+        </div>
+
+        <!-- ========== 课表课程弹窗 ========== -->
+        <div class="modal-overlay" id="schCourseModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="Schedule.closeModal()">✕</span>
+                    <span class="modal-title" id="schModalTitle">添加课程</span>
+                    <span class="modal-save" id="schModalSave" onclick="Schedule.saveCourse()">添加</span>
+                </div>
+                <div class="modal-body">
+                    <div class="sch-modal-slot" id="schModalSlot"></div>
+                    <div class="form-row">
+                        <label class="form-label">课程名称</label>
+                        <input type="text" class="note-input" id="schCourseName" placeholder="如：信息科技/编程" maxlength="20">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">班级</label>
+                        <input type="text" class="note-input" id="schCourseClass" placeholder="如：3年级8班" maxlength="20">
+                    </div>
+                    <div class="sync-actions" id="schDelRow" style="display:none">
+                        <button class="sync-btn sync-btn-danger" onclick="Schedule.deleteCourse()">🗑️ 删除该课程</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -497,6 +537,7 @@
     <script src="lib/supabase.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>
     <script src="js/accounting.js"></script>
+    <script src="js/schedule.js"></script>
     <script src="js/birthday.js"></script>
 </body>
 </html>

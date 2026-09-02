@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.5';
+const APP_VERSION = '5.6';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -447,6 +447,7 @@ function switchPage(page) {
   if (page === 'home') updateHomeView();
   if (page === 'stats') updateStatsView();
   if (page === 'birthday' && typeof UI !== 'undefined' && UI.render) UI.render();
+  if (page === 'schedule' && typeof Schedule !== 'undefined') Schedule.render();
 }
 
 // ==================== 首页视图 ====================

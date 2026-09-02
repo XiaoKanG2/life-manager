@@ -367,6 +367,34 @@ input, button {
 .checkin-acct-input::-webkit-inner-spin-button { -webkit-appearance: none; }
 
 /* ========== 统计页 ========== */
+/* ========== 资产页内子 tab（资产概览 / 统计分析） ========== */
+.home-sub-tabs {
+    display: flex;
+    margin: 10px 16px 4px;
+    padding: 4px;
+    background: #E8ECF2;
+    border-radius: 22px;
+    gap: 4px;
+}
+.home-sub-tab {
+    flex: 1;
+    text-align: center;
+    padding: 8px 0;
+    border-radius: 18px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.home-sub-tab.active {
+    background: var(--primary);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(74, 144, 217, 0.35);
+}
+
 .stats-control-row {
     display: flex;
     align-items: center;

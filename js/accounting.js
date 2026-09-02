@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.7';
+const APP_VERSION = '5.8';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -392,6 +392,24 @@ function migrateOldData() {
 // ==================== 应用状态 ====================
 
 let currentPage = 'home';
+let currentHomeSub = 'overview'; // 资产页内子视图：overview=资产概览 / stats=统计分析
+
+// 资产页内子 tab 切换（资产概览 / 统计分析）
+function switchHomeSub(sub) {
+  if (sub !== 'overview' && sub !== 'stats') return;
+  currentHomeSub = sub;
+  document.querySelectorAll('.home-sub-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.sub === sub);
+  });
+  const overview = document.getElementById('homeOverview');
+  const stats = document.getElementById('homeStats');
+  if (overview) overview.style.display = sub === 'overview' ? '' : 'none';
+  if (stats) {
+    stats.style.display = sub === 'stats' ? '' : 'none';
+    // 先显示再渲染，避免 canvas 在隐藏容器中宽度为 0
+    if (sub === 'stats') updateStatsView();
+  }
+}
 let statsAccountId = null; // 统计页选中的账户
 let statsMode = 'month'; // 'month' | 'year'
 let statsYear, statsMonth;
@@ -444,8 +462,11 @@ function switchPage(page) {
   const tabItem = document.querySelector(`.tab-item[data-page="${page}"]`);
   if (tabItem) tabItem.classList.add('active');
 
-  if (page === 'home') updateHomeView();
-  if (page === 'stats') updateStatsView();
+  if (page === 'home') {
+    updateHomeView();
+    // 子 tab 为统计分析时同步刷新统计视图（容器当前可见）
+    if (currentHomeSub === 'stats') updateStatsView();
+  }
   if (page === 'birthday' && typeof UI !== 'undefined' && UI.render) UI.render();
   if (page === 'schedule' && typeof Schedule !== 'undefined') Schedule.render();
 }
@@ -1288,8 +1309,11 @@ function formatDate(dateStr) {
 // ==================== 全局刷新 ====================
 
 function updateAllViews() {
-  if (currentPage === 'home') updateHomeView();
-  if (currentPage === 'stats') updateStatsView();
+  if (currentPage === 'home') {
+    updateHomeView();
+    // 数据变化后，若正停留在统计分析子 tab 则同步刷新
+    if (currentHomeSub === 'stats') updateStatsView();
+  }
 }
 
 // ==================== 持久化存储 ====================

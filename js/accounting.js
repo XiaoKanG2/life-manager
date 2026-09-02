@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.8';
+const APP_VERSION = '5.9';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -394,6 +394,116 @@ function migrateOldData() {
 let currentPage = 'home';
 let currentHomeSub = 'overview'; // 资产页内子视图：overview=资产概览 / stats=统计分析
 
+// ==================== 底部导航配置 ====================
+
+const TAB_CONFIG_KEY = 'tab_config';
+const DEFAULT_TABS = [
+  { id: 'home', label: '资产', icon: '🏠' },
+  { id: 'birthday', label: '生日', icon: '🎂' },
+  { id: 'schedule', label: '课表', icon: '📅' },
+  { id: 'settings', label: '设置', icon: '⚙️' }
+];
+
+function loadTabConfig() {
+  let cfg = [];
+  try { cfg = JSON.parse(localStorage.getItem(TAB_CONFIG_KEY)) || []; } catch (e) { cfg = []; }
+  // 已有 tab 保持 cfg 中的顺序；缺失的新 tab 按默认顺序补在后面；settings 强制最后且可见
+  const result = [];
+  const seen = {};
+  cfg.forEach(c => {
+    if (c.id === 'settings') return; // settings 不参与顺序，固定最后统一生成
+    const d = DEFAULT_TABS.find(x => x.id === c.id);
+    if (d) { seen[c.id] = true; result.push({ id: d.id, label: d.label, icon: d.icon, visible: !!c.visible }); }
+  });
+  DEFAULT_TABS.filter(d => d.id !== 'settings').forEach(d => {
+    if (!seen[d.id]) result.push({ id: d.id, label: d.label, icon: d.icon, visible: true });
+  });
+  result.push({ id: 'settings', label: '设置', icon: '⚙️', visible: true });
+  return result;
+}
+
+function saveTabConfig(tabs) {
+  localStorage.setItem(TAB_CONFIG_KEY, JSON.stringify(tabs));
+}
+
+function getVisibleTabs() {
+  return loadTabConfig().filter(t => t.visible);
+}
+
+// 底部 tab 栏动态渲染（settings 恒可见，保证不会空）
+function renderTabBar() {
+  const bar = document.getElementById('tabBar');
+  if (!bar) return;
+  const tabs = getVisibleTabs();
+  bar.innerHTML = tabs.map(t => `
+    <div class="tab-item ${t.id === currentPage ? 'active' : ''}" data-page="${t.id}" onclick="switchPage('${t.id}')">
+      <span class="tab-icon">${t.icon}</span>
+      <span class="tab-label">${t.label}</span>
+    </div>`).join('');
+  // 当前页被隐藏时自动切到第一个可见页
+  if (!tabs.some(t => t.id === currentPage)) switchPage(tabs[0].id);
+}
+
+function openTabConfigModal() {
+  renderTabConfigList();
+  document.getElementById('tabConfigModal').classList.add('active');
+}
+
+function closeTabConfigModal() {
+  document.getElementById('tabConfigModal').classList.remove('active');
+}
+
+function renderTabConfigList() {
+  const tabs = loadTabConfig();
+  const list = document.getElementById('tabConfigList');
+  list.innerHTML = tabs.map((t, i) => {
+    const isSettings = t.id === 'settings';
+    return `
+      <div class="tab-config-item ${isSettings ? 'disabled' : ''}">
+        <span class="tab-config-icon">${t.icon}</span>
+        <span class="tab-config-name">${t.label}</span>
+        <div class="tab-config-ops">
+          <span class="tab-arrow-btn ${i === 0 ? 'dim' : ''}" onclick="moveTab('${t.id}', -1)">↑</span>
+          <span class="tab-arrow-btn ${i === tabs.length - 1 ? 'dim' : ''}" onclick="moveTab('${t.id}', 1)">↓</span>
+        </div>
+        <span class="tab-toggle ${t.visible ? 'on' : ''} ${isSettings ? 'locked' : ''}" onclick="toggleTabVisible('${t.id}')">
+          <span class="tab-toggle-knob"></span>
+        </span>
+      </div>`;
+  }).join('');
+}
+
+function toggleTabVisible(id) {
+  if (id === 'settings') return; // 设置固定显示
+  const tabs = loadTabConfig();
+  const tab = tabs.find(t => t.id === id);
+  if (!tab) return;
+  const visibleNonSettings = tabs.filter(t => t.id !== 'settings' && t.visible).length;
+  if (tab.visible && visibleNonSettings <= 1) {
+    showToast('至少保留一个导航页');
+    return;
+  }
+  tab.visible = !tab.visible;
+  saveTabConfig(tabs);
+  renderTabBar();
+  renderTabConfigList();
+}
+
+function moveTab(id, dir) {
+  const tabs = loadTabConfig();
+  const idx = tabs.findIndex(t => t.id === id);
+  if (idx < 0) return;
+  const target = idx + dir;
+  if (target < 0 || target >= tabs.length) return;
+  if (tabs[idx].id === 'settings' || tabs[target].id === 'settings') return; // 设置固定最后
+  const tmp = tabs[idx];
+  tabs[idx] = tabs[target];
+  tabs[target] = tmp;
+  saveTabConfig(tabs);
+  renderTabBar();
+  renderTabConfigList();
+}
+
 // 资产页内子 tab 切换（资产概览 / 统计分析）
 function switchHomeSub(sub) {
   if (sub !== 'overview' && sub !== 'stats') return;
@@ -430,6 +540,7 @@ async function init() {
     // 默认选中第一个账户用于统计
     const accounts = getAccounts();
     if (accounts.length > 0 && !statsAccountId) statsAccountId = accounts[0].id;
+    renderTabBar();
     updateAllViews();
     updateSyncBadge();
     registerServiceWorker();
@@ -454,6 +565,11 @@ async function init() {
 // ==================== 页面导航 ====================
 
 function switchPage(page) {
+  // 防呆：目标页被隐藏时重定向到第一个可见页
+  const visibleTabs = getVisibleTabs();
+  if (!visibleTabs.some(t => t.id === page)) {
+    page = visibleTabs[0] ? visibleTabs[0].id : 'home';
+  }
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const pageEl = document.getElementById(`page-${page}`);

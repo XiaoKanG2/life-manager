@@ -221,6 +221,12 @@
                     <span class="settings-label">生日设置</span>
                     <span class="settings-arrow">></span>
                 </div>
+                <div class="settings-item" onclick="openTabConfigModal()">
+                    <span class="settings-icon">📑</span>
+                    <span class="settings-label">底部导航</span>
+                    <span class="settings-desc">显示 / 隐藏 tab 及排序</span>
+                    <span class="settings-arrow">></span>
+                </div>
             </div>
             <div class="settings-group">
                 <div class="settings-item" onclick="hardRefresh()">
@@ -243,25 +249,8 @@
             </div>
         </div>
 
-        <!-- ========== 底部导航 ========== -->
-        <div class="tab-bar">
-            <div class="tab-item active" data-page="home" onclick="switchPage('home')">
-                <span class="tab-icon">🏠</span>
-                <span class="tab-label">资产</span>
-            </div>
-            <div class="tab-item" data-page="birthday" onclick="switchPage('birthday')">
-                <span class="tab-icon">🎂</span>
-                <span class="tab-label">生日</span>
-            </div>
-            <div class="tab-item" data-page="schedule" onclick="switchPage('schedule')">
-                <span class="tab-icon">📅</span>
-                <span class="tab-label">课表</span>
-            </div>
-            <div class="tab-item" data-page="settings" onclick="switchPage('settings')">
-                <span class="tab-icon">⚙️</span>
-                <span class="tab-label">设置</span>
-            </div>
-        </div>
+        <!-- ========== 底部导航（由 JS 按配置动态渲染） ========== -->
+        <div class="tab-bar" id="tabBar"></div>
 
         <!-- ========== 课表课程弹窗 ========== -->
         <div class="modal-overlay" id="schCourseModal">
@@ -333,6 +322,21 @@
                     <div class="add-account-row">
                         <input type="text" id="accountNameInput" placeholder="账户名称（如：支付宝）" maxlength="20">
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 底部导航设置弹窗 ========== -->
+        <div class="modal-overlay" id="tabConfigModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="closeTabConfigModal()">✕</span>
+                    <span class="modal-title">底部导航设置</span>
+                    <span class="modal-save" onclick="closeTabConfigModal()">完成</span>
+                </div>
+                <div class="modal-body">
+                    <div class="tab-config-list" id="tabConfigList"></div>
+                    <p class="modal-hint">开关控制是否显示在底部栏；↑↓ 调整顺序。⚙️ 设置页固定显示、不可移动。</p>
                 </div>
             </div>
         </div>

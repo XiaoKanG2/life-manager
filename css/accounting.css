@@ -281,6 +281,53 @@ input, button {
 .tab-icon { font-size: 22px; margin-bottom: 2px; }
 .tab-label { font-size: 11px; font-weight: 500; }
 
+/* ========== 底部导航设置（弹窗内） ========== */
+.tab-config-list { padding: 6px 0; }
+.tab-config-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 2px;
+    border-bottom: 1px solid var(--border);
+}
+.tab-config-item:last-child { border-bottom: none; }
+.tab-config-item.disabled { opacity: 0.5; }
+.tab-config-icon { font-size: 20px; width: 30px; text-align: center; flex-shrink: 0; }
+.tab-config-name { flex: 1; font-size: 15px; font-weight: 500; }
+.tab-config-ops { display: flex; gap: 6px; flex-shrink: 0; }
+.tab-arrow-btn {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: #F0F0F0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    cursor: pointer;
+    color: var(--text);
+    transition: all 0.15s;
+}
+.tab-arrow-btn:active { background: var(--primary); color: #fff; }
+.tab-arrow-btn.dim { opacity: 0.25; pointer-events: none; }
+.tab-toggle {
+    width: 46px; height: 26px;
+    border-radius: 13px;
+    background: #D5DBE3;
+    position: relative;
+    transition: background 0.2s;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.tab-toggle.on { background: var(--primary); }
+.tab-toggle.locked { pointer-events: none; }
+.tab-toggle-knob {
+    position: absolute; top: 3px; left: 3px;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    transition: left 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+}
+.tab-toggle.on .tab-toggle-knob { left: 23px; }
+
 /* ========== 弹窗 ========== */
 .modal-overlay {
     display: none;

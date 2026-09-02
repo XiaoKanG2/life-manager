@@ -367,10 +367,17 @@ input, button {
 .checkin-acct-input::-webkit-inner-spin-button { -webkit-appearance: none; }
 
 /* ========== 统计页 ========== */
+.stats-control-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px 4px;
+    gap: 8px;
+}
 .mode-tabs {
     display: flex;
-    padding: 10px 16px 0;
     gap: 8px;
+    flex-shrink: 0;
 }
 .mode-tab {
     padding: 8px 20px;
@@ -387,11 +394,11 @@ input, button {
 .period-nav {
     display: flex;
     align-items: center;
-    justify-content: center;
-    padding: 12px 16px 8px;
-    gap: 16px;
+    justify-content: flex-end;
+    gap: 10px;
     font-size: 15px;
     font-weight: 600;
+    flex-shrink: 0;
 }
 .month-nav-btn {
     width: 32px; height: 32px;
@@ -448,14 +455,16 @@ input, button {
 }
 .stats-summary-item {
     flex: 1;
+    min-width: 0;
     text-align: center;
     background: var(--card-bg);
     padding: 12px 8px;
     border-radius: var(--radius-sm);
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    overflow: hidden;
 }
-.stats-summary-label { font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 4px; }
-.stats-summary-value { font-size: 16px; font-weight: 600; }
+.stats-summary-label { font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stats-summary-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stats-summary-value.positive { color: var(--positive); }
 .stats-summary-value.negative { color: var(--negative); }
 
@@ -474,7 +483,7 @@ input, button {
     font-size: 13px;
 }
 .detail-date { min-width: 50px; color: var(--text-secondary); font-size: 12px; }
-.detail-amount { flex: 1; font-weight: 600; font-variant-numeric: tabular-nums; }
+.detail-amount { flex: 1; min-width: 0; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .detail-change { min-width: 80px; text-align: center; font-size: 12px; font-weight: 500; }
 .detail-change.positive { color: var(--positive); }
 .detail-change.negative { color: var(--negative); }
@@ -602,22 +611,30 @@ input, button {
     padding: 12px 14px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     text-align: center;
+    overflow: hidden;
 }
 .comp-card-title {
     font-size: 12px;
     color: var(--text-secondary);
     margin-bottom: 6px;
-    white-space: nowrap;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
 }
 .comp-card-amount {
-    font-size: 17px;
+    font-size: 13px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .comp-card-pct {
     font-size: 12px;
     margin-top: 2px;
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .comp-card .up { color: var(--negative); }
 .comp-card .down { color: var(--positive); }

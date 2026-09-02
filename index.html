@@ -130,17 +130,17 @@
             <div class="nav-bar">
                 <span class="nav-title">资产趋势</span>
             </div>
-            <div class="mode-tabs">
-                <button class="mode-tab active" data-mode="month" onclick="changeStatsMode('month')">按月</button>
-                <button class="mode-tab" data-mode="year" onclick="changeStatsMode('year')">按年</button>
+            <div class="stats-control-row">
+                <div class="mode-tabs">
+                    <button class="mode-tab active" data-mode="month" onclick="changeStatsMode('month')">按月</button>
+                    <button class="mode-tab" data-mode="year" onclick="changeStatsMode('year')">按年</button>
+                </div>
+                <div class="period-nav">
+                    <span class="month-nav-btn" onclick="changeStatsPeriod(-1)"><</span>
+                    <span id="statsPeriodLabel"></span>
+                    <span class="month-nav-btn" onclick="changeStatsPeriod(1)">></span>
+                </div>
             </div>
-            <div class="period-nav">
-                <span class="month-nav-btn" onclick="changeStatsPeriod(-1)"><</span>
-                <span id="statsPeriodLabel"></span>
-                <span class="month-nav-btn" onclick="changeStatsPeriod(1)">></span>
-            </div>
-            <div class="stats-account-selector" id="statsAccountSelector"></div>
-            <div class="comparison-cards" id="comparisonCards"></div>
             <div class="chart-box">
                 <div class="chart-title">📊 总资产趋势</div>
                 <div class="chart-wrap">
@@ -153,6 +153,8 @@
                     <canvas id="pieChart"></canvas>
                 </div>
             </div>
+            <div class="stats-account-selector" id="statsAccountSelector"></div>
+            <div class="comparison-cards" id="comparisonCards"></div>
             <div class="chart-box">
                 <div class="chart-title">余额变化</div>
                 <div class="chart-wrap">

@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.9';
+const APP_VERSION = '5.10';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -541,6 +541,9 @@ async function init() {
     const accounts = getAccounts();
     if (accounts.length > 0 && !statsAccountId) statsAccountId = accounts[0].id;
     renderTabBar();
+    // 默认打开第一个可见 tab（尊重用户调整过的 tab 顺序）
+    const firstVisible = getVisibleTabs()[0];
+    if (firstVisible) switchPage(firstVisible.id);
     updateAllViews();
     updateSyncBadge();
     registerServiceWorker();

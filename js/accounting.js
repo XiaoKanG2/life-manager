@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.3';
+const APP_VERSION = '5.4';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -55,6 +55,19 @@ function fmtAmtSigned(amount) {
   if (!amountVisible) return '¥***.**';
   const sign = amount >= 0 ? '+' : '';
   return sign + '¥' + Math.abs(amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// 整数金额（无符号，用于最高/最低等统计项）
+function fmtAmtInt(amount) {
+  if (!amountVisible) return '¥***.**';
+  return '¥' + Number(amount).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+}
+
+// 带符号的整数金额（用于增长/减少、环比变化）
+function fmtAmtSignedInt(amount) {
+  if (!amountVisible) return '¥***.**';
+  const sign = amount >= 0 ? '+' : '';
+  return sign + '¥' + Math.abs(amount).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
 }
 
 // 金额脱敏包装：传入已格式化的字符串，脱敏时替换数字部分
@@ -335,10 +348,9 @@ function updateComparisonCards() {
 
 function renderCompCard(title, currLabel, prevLabel, change, pct) {
   const cls = change > 0 ? 'up' : (change < 0 ? 'down' : 'flat');
-  const arrow = change > 0 ? '↑' : (change < 0 ? '↓' : '→');
   return `<div class="comp-card">
     <div class="comp-card-title">${title} <span style="font-size:10px">环比</span></div>
-    <div class="comp-card-amount ${cls}">${fmtAmtSigned(change)} ${arrow}</div>
+    <div class="comp-card-amount ${cls}">${fmtAmtSignedInt(change)}</div>
     <div class="comp-card-pct ${cls}">${amountVisible ? ((pct >= 0 ? '+' : '') + pct.toFixed(2) + '%') : '**%'}</div>
   </div>`;
 }
@@ -768,10 +780,10 @@ function changeStatsPeriod(delta) {
 
 function updateStatsSummary(timeline) {
   if (timeline.length < 2) {
-    document.getElementById('statsGrowthAmount').textContent = timeline.length > 0 ? fmtAmt(0) : '--';
+    document.getElementById('statsGrowthAmount').textContent = timeline.length > 0 ? fmtAmtInt(0) : '--';
     document.getElementById('statsChangePercent').textContent = timeline.length > 0 ? (amountVisible ? '0%' : '**%') : '--';
-    document.getElementById('statsHighest').textContent = timeline.length > 0 ? fmtAmt(Math.max(...timeline.map(t => t.balance))) : '--';
-    document.getElementById('statsLowest').textContent = timeline.length > 0 ? fmtAmt(Math.min(...timeline.map(t => t.balance))) : '--';
+    document.getElementById('statsHighest').textContent = timeline.length > 0 ? fmtAmtInt(Math.max(...timeline.map(t => t.balance))) : '--';
+    document.getElementById('statsLowest').textContent = timeline.length > 0 ? fmtAmtInt(Math.min(...timeline.map(t => t.balance))) : '--';
     return;
   }
 
@@ -781,12 +793,12 @@ function updateStatsSummary(timeline) {
   const pct = first !== 0 ? ((change / first) * 100) : 0;
 
   const changeEl = document.getElementById('statsGrowthAmount');
-  changeEl.textContent = fmtAmtSigned(change);
+  changeEl.textContent = fmtAmtSignedInt(change);
   changeEl.className = 'stats-summary-value ' + (change >= 0 ? 'positive' : 'negative');
 
   document.getElementById('statsChangePercent').textContent = amountVisible ? ((pct >= 0 ? '+' : '') + pct.toFixed(2) + '%') : '**%';
-  document.getElementById('statsHighest').textContent = fmtAmt(Math.max(...timeline.map(t => t.balance)));
-  document.getElementById('statsLowest').textContent = fmtAmt(Math.min(...timeline.map(t => t.balance)));
+  document.getElementById('statsHighest').textContent = fmtAmtInt(Math.max(...timeline.map(t => t.balance)));
+  document.getElementById('statsLowest').textContent = fmtAmtInt(Math.min(...timeline.map(t => t.balance)));
 }
 
 function renderStatsDetail(records, accounts) {

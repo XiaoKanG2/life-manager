@@ -461,10 +461,9 @@ input, button {
     padding: 12px 8px;
     border-radius: var(--radius-sm);
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    overflow: hidden;
 }
 .stats-summary-label { font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stats-summary-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stats-summary-value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .stats-summary-value.positive { color: var(--positive); }
 .stats-summary-value.negative { color: var(--negative); }
 
@@ -604,14 +603,13 @@ input, button {
     padding-bottom: 4px;
 }
 .comp-card {
-    flex: 1;
+    flex: 0 0 auto;
     min-width: 120px;
     background: var(--card-bg);
     border-radius: var(--radius);
     padding: 12px 14px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     text-align: center;
-    overflow: hidden;
 }
 .comp-card-title {
     font-size: 12px;
@@ -625,16 +623,12 @@ input, button {
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 .comp-card-pct {
     font-size: 12px;
     margin-top: 2px;
     font-weight: 500;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 .comp-card .up { color: var(--negative); }
 .comp-card .down { color: var(--positive); }

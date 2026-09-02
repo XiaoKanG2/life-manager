@@ -42,7 +42,7 @@ const Schedule = (function () {
     d3_p1: { name: '信息科技/编程', cls: '3年级6班', room: '①' },
     d3_p2: { name: '信息科技/编程', cls: '4年级8班', room: '①' },
     d3_p4: { name: '信息科技/编程', cls: '4年级6班', room: '②' },
-    d3_p5: { name: '信息科技/编程', cls: '3年级1班', room: '②' },
+    d3_p5: { name: '信息科技/编程', cls: '3年级1班', room: '③' },
     d4_p1: { name: '信息科技/编程', cls: '4年级8班', room: '②' },
     d4_p3: { name: '信息科技/编程', cls: '3年级9班', room: '①' },
     d4_p4: { name: '信息科技/编程', cls: '3年级10班', room: '①' },
@@ -53,22 +53,31 @@ const Schedule = (function () {
     d5_p6: { name: '信息科技/编程', cls: '3年级3班', room: '③' }
   };
 
-  // 旧数据迁移：为缺少机房号的课程按「同位置同班级」补充默认机房号
-  // （仅当该格子的班级与默认模板一致时才补，避免覆盖用户手动调整过的课表）
+  // 旧数据修复（幂等，每次渲染前都会执行）：
+  // ① 为缺少机房号的课程按「同位置同班级」补充默认机房号
+  //    （数据源优先用当前模板，其次内置默认模板；仅班级完全一致才补，避免覆盖用户手动调整过的课表）
+  // ② 修正 d3_p5（周三第5节）旧默认值：机房 ② → ③（班级为 3年级1班 才修正）
   function migrateRoomData() {
+    const t = loadJSON(TEMPLATE_KEY, null);
+    const def = DEFAULT_TEMPLATE;
     function fill(store) {
       let n = 0;
-      Object.keys(DEFAULT_TEMPLATE).forEach(function (slot) {
-        const def = DEFAULT_TEMPLATE[slot];
+      Object.keys(def).forEach(function (slot) {
         const cur = store[slot];
-        if (cur && !cur.room && cur.cls === def.cls) {
-          cur.room = def.room;
-          n++;
+        if (!cur) return;
+        // ① 缺机房：按当前模板或内置模板「同位置同班级」补
+        if (!cur.room) {
+          const tmpl = t && t[slot];
+          if (tmpl && tmpl.room && tmpl.cls === cur.cls) { cur.room = tmpl.room; n++; }
+          else if (def[slot].room && def[slot].cls === cur.cls) { cur.room = def[slot].room; n++; }
+        }
+        // ② 修正周三第5节旧默认机房
+        if (slot === 'd3_p5' && cur.cls === '3年级1班' && cur.room === '②') {
+          cur.room = '③'; n++;
         }
       });
       return n;
     }
-    const t = loadJSON(TEMPLATE_KEY, null);
     if (t && fill(t) > 0) saveJSON(TEMPLATE_KEY, t);
     const weeks = loadJSON(WEEKS_KEY, {});
     let weekChanged = false;
@@ -165,6 +174,8 @@ const Schedule = (function () {
   // ==================== 渲染 ====================
 
   function render() {
+    // 渲染前先修复历史数据（缺机房 / 周三第5节默认值），幂等
+    migrateRoomData();
     const content = document.getElementById('schContent');
     if (!content) return;
 

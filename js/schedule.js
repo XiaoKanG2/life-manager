@@ -164,10 +164,12 @@ const Schedule = (function () {
   }
 
   async function resetWeek(weekKey) {
-    const ok = await showConfirmModal('重置本周', '将本周课表恢复为模板内容，本周已有的调整会被覆盖。确定重置吗？');
+    const isThisWeek = weekKey === weekKeyOf(0);
+    const label = isThisWeek ? '本周' : '下周';
+    const ok = await showConfirmModal('重置' + label, '将' + label + '课表恢复为模板内容，' + label + '已有的调整会被覆盖。确定重置吗？');
     if (!ok) return;
     saveWeek(weekKey, deepCopy(getTemplate()));
-    showToast('本周已重置为模板');
+    showToast(label + '已重置为模板');
     render();
   }
 
@@ -191,7 +193,7 @@ const Schedule = (function () {
       content.appendChild(buildWeekTable(TEMPLATE_ID, '模板课表', '每周以此初始化', false));
     } else {
       content.appendChild(buildWeekTable(weekKeyOf(0), '本周', weekRangeText(weekKeyOf(0)), true));
-      content.appendChild(buildWeekTable(weekKeyOf(1), '下周', weekRangeText(weekKeyOf(1)), false));
+      content.appendChild(buildWeekTable(weekKeyOf(1), '下周', weekRangeText(weekKeyOf(1)), true));
     }
 
     // 同步模板按钮状态

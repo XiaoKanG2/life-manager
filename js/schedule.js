@@ -15,7 +15,7 @@ const Schedule = (function () {
   const REMINDED_PREFIX = 'schedule_reminded_';       // 当日已提醒记录 schedule_reminded_YYYY-MM-DD
   const REMIND_LEAD_CHOICES = [5, 10, 15, 20, 30];    // 可选的提前分钟数
   const CLOUD_KEY = 'schedule_cloud';                 // { deviceId, lastSyncAt } 云端推送登记
-  const WX_KEY = 'schedule_wx_cfg';                   // { provider, key } 微信推送通道（界面填写，同云端同步模式）
+  const WX_KEY = 'schedule_wx_cfg';                   // { provider:'pushplus', key, toSelf, friends:[{name,token}] } 微信推送通道
   const TEMPLATE_ID = '__template__'; // 模板模式下周实例的虚拟 key
 
   const DAY_NAMES = ['星期一', '星期二', '星期三', '星期四', '星期五'];
@@ -738,42 +738,150 @@ const Schedule = (function () {
   }
 
   // ===== 微信推送通道配置（界面填写，同云端同步逻辑：本地存储 + 上报云端） =====
-  // 仅支持 PushPlus 单通道（provider 固定 pushplus，兼容旧 sct 数据自动迁移）
+  // 仅支持 PushPlus 单通道。语义：token=发送者本人（PushPlus 用户令牌）；
+  // friends=好友令牌列表（发送时拼 to 参数同时转发给好友，pushplus 限制 ≤10 个/请求）；
+  // toSelf=是否额外给自己发一条（PushPlus 带 to 只发给好友，故分开请求）。
+  const MAX_FRIENDS = 10;
+
   function getWxCfg() {
     const c = loadJSON(WX_KEY, null) || {};
+    const raw = Array.isArray(c.friends) ? c.friends : [];
+    const seen = {};
+    const friends = [];
+    raw.forEach(function (f) {
+      if (!f || typeof f.token !== 'string') return;
+      const token = f.token.trim();
+      if (!token || seen[token] || friends.length >= MAX_FRIENDS) return;
+      seen[token] = 1;
+      friends.push({ name: String(f.name || '').trim().slice(0, 20), token: token.slice(0, 200) });
+    });
     return {
       provider: 'pushplus',
-      key: (typeof c.key === 'string') ? c.key : ''
+      key: (typeof c.key === 'string') ? c.key : '',
+      toSelf: c.toSelf !== false,
+      friends: friends
     };
   }
 
-  function saveWxCfg(key) {
-    localStorage.setItem(WX_KEY, JSON.stringify({ provider: 'pushplus', key: String(key || '').trim() }));
-    cloudQueueSoon(); // 通道变化 → 带新 key 重新同步云端计划
+  function saveWxCfg(key, toSelf, friends) {
+    const seen = {};
+    const list = (Array.isArray(friends) ? friends : []).reduce(function (acc, f) {
+      if (!f || typeof f.token !== 'string') return acc;
+      const token = f.token.trim();
+      if (!token || seen[token] || acc.length >= MAX_FRIENDS) return acc;
+      seen[token] = 1;
+      acc.push({ name: String(f.name || '').trim().slice(0, 20), token: token.slice(0, 200) });
+      return acc;
+    }, []);
+    localStorage.setItem(WX_KEY, JSON.stringify({
+      provider: 'pushplus',
+      key: String(key || '').trim(),
+      toSelf: toSelf !== false,
+      friends: list
+    }));
+    cloudQueueSoon(); // 通道变化 → 带新配置重新同步云端计划
   }
 
-  // 打开提醒弹窗时把已保存的 key 回显到表单（通道固定 PushPlus，无需回显下拉）
+  // 打开提醒弹窗时把已保存的配置回显到表单（通道固定 PushPlus）
   function loadWxCfgIntoUI() {
+    const cfg = getWxCfg();
     const kInput = document.getElementById('schWxKey');
-    if (!kInput) return;
-    kInput.value = getWxCfg().key;
+    if (kInput) kInput.value = cfg.key;
+    const selfEl = document.getElementById('schWxSelf');
+    if (selfEl) selfEl.classList.toggle('on', cfg.toSelf);
+    renderFriendRows(cfg.friends);
   }
 
-  // 读取界面表单保存：校验必填后持久化并提示
+  // 好友令牌输入行（无数据绑定：保存时按行收集；追加/删除只操作 DOM）
+  function renderFriendRows(list) {
+    const box = document.getElementById('schWxFriendList');
+    if (!box) return;
+    box.innerHTML = '';
+    if (list && list.length) list.forEach(function (f) { appendFriendRow(f.name, f.token); });
+    else appendFriendRow('', '');
+  }
+
+  function appendFriendRow(name, token) {
+    const box = document.getElementById('schWxFriendList');
+    if (!box) return;
+    const row = document.createElement('div');
+    row.className = 'sch-friend-row';
+    const iName = document.createElement('input');
+    iName.type = 'text';
+    iName.className = 'note-input sch-friend-name';
+    iName.placeholder = '备注（如：家人）';
+    iName.value = name || '';
+    iName.setAttribute('autocomplete', 'off');
+    const iToken = document.createElement('input');
+    iToken.type = 'text';
+    iToken.className = 'note-input';
+    iToken.placeholder = '粘贴对方的好友令牌';
+    iToken.value = token || '';
+    iToken.setAttribute('autocomplete', 'off');
+    const del = document.createElement('span');
+    del.className = 'sch-friend-del';
+    del.textContent = '✕';
+    del.setAttribute('onclick', 'Schedule.removeFriendRow(this)');
+    row.appendChild(iName);
+    row.appendChild(iToken);
+    row.appendChild(del);
+    box.appendChild(row);
+  }
+
+  function addFriendRow() { appendFriendRow('', ''); }
+
+  function removeFriendRow(el) {
+    const row = el && el.closest ? el.closest('.sch-friend-row') : null;
+    if (row && row.parentNode) row.parentNode.removeChild(row);
+    const box = document.getElementById('schWxFriendList');
+    if (box && !box.children.length) appendFriendRow('', '');
+  }
+
+  function toggleWxSelf() {
+    const selfEl = document.getElementById('schWxSelf');
+    if (selfEl) selfEl.classList.toggle('on');
+  }
+
+  // 保存时从表单行收集好友（去重、限 10 个）
+  function collectFriendRows() {
+    const box = document.getElementById('schWxFriendList');
+    const list = [];
+    if (!box) return list;
+    const seen = {};
+    Array.prototype.forEach.call(box.querySelectorAll('.sch-friend-row'), function (row) {
+      const inputs = row.querySelectorAll('input');
+      const name = inputs[0] ? inputs[0].value.trim() : '';
+      const token = inputs[1] ? inputs[1].value.trim() : '';
+      if (!token || seen[token] || list.length >= MAX_FRIENDS) return;
+      seen[token] = 1;
+      list.push({ name: name.slice(0, 20), token: token.slice(0, 200) });
+    });
+    return list;
+  }
+
+  // 读取界面表单保存：key=发送者本人令牌（必填）；toSelf/好友列表一并持久化
   function saveWxConfig() {
     const kInput = document.getElementById('schWxKey');
     if (!kInput) return;
     const key = kInput.value.trim();
     if (!key) { showToast('请先粘贴 PushPlus Token'); return; }
-    saveWxCfg(key);
-    showToast('微信推送 Key 已保存并同步云端');
+    const selfEl = document.getElementById('schWxSelf');
+    const toSelf = !selfEl || selfEl.classList.contains('on');
+    const friends = collectFriendRows();
+    saveWxCfg(key, toSelf, friends);
+    showToast('微信推送配置已保存并同步云端' + (friends.length ? '（' + friends.length + ' 位好友）' : ''));
     cloudStatusRefresh();
   }
 
-  // 清除本地保存的 key
+  // 清除本地保存的配置
   function clearWxConfig() {
     localStorage.removeItem(WX_KEY);
-    showToast('已清除推送 Key');
+    const kInput = document.getElementById('schWxKey');
+    if (kInput) kInput.value = '';
+    const selfEl = document.getElementById('schWxSelf');
+    if (selfEl) selfEl.classList.add('on');
+    renderFriendRows([]);
+    showToast('已清除推送配置');
     cloudStatusRefresh();
   }
 
@@ -1202,8 +1310,11 @@ const Schedule = (function () {
       })
     }).then(function (r) { return r.json().catch(function () { return {}; }); })
       .then(function (res) {
-        if (res && res.ok) showToast('✅ 已发送，请在微信「服务号消息」查看');
-        else showToast(res && res.error ? res.error : '发送失败，请检查 Key 是否正确');
+        if (res && res.ok) {
+          const rs = Array.isArray(res.results) ? res.results : [];
+          const okN = rs.filter(function (r) { return r && r.ok; }).length;
+          showToast('✅ 已发送（成功 ' + okN + '/' + rs.length + '），请在微信「服务号消息」查看');
+        } else showToast(res && res.error ? res.error : '发送失败，请检查 Key 是否正确');
       }).catch(function () { showToast('发送失败：云端服务不可达'); });
   }
 
@@ -1250,11 +1361,14 @@ const Schedule = (function () {
     cloudManualSync: cloudManualSync,
     cloudStatusRefresh: cloudStatusRefresh,
     sendCloudTest: sendCloudTest,
-    // 微信通道 Key 界面填写（同云端同步模式）
+    // 微信通道 Key/好友 界面填写（同云端同步模式）
     saveWxConfig: saveWxConfig,
     clearWxConfig: clearWxConfig,
     loadWxCfgIntoUI: loadWxCfgIntoUI,
     getWxCfg: getWxCfg,
+    toggleWxSelf: toggleWxSelf,
+    addFriendRow: addFriendRow,
+    removeFriendRow: removeFriendRow,
     // 课表云同步（独立 key）
     getTemplateData: getTemplateData,
     importTemplateData: importTemplateData,

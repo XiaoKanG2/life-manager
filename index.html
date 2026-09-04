@@ -333,20 +333,39 @@
                             <div class="sch-remind-desc">PushPlus（pushplus.plus）· 微信扫码登录后复制 Token 粘贴下方</div>
                         </div>
                         <div class="form-row">
-                            <label class="form-label">PushPlus Token</label>
-                            <input type="text" class="note-input" id="schWxKey" placeholder="粘贴 PushPlus 官网复制的 Token" autocomplete="off">
+                            <label class="form-label">PushPlus Token（发送者本人）</label>
+                            <input type="text" class="note-input" id="schWxKey" placeholder="粘贴自己的 Token（pushplus.plus 一对一推送中复制）" autocomplete="off">
                             <div class="sch-remind-hint" style="margin-top:4px">
                                 获取方式：打开 pushplus.plus → 微信扫码登录 → 一对一推送 → 复制 Token 粘贴到此处。<br>
-                                Token 仅保存在本机，随提醒计划上报云端用于推送，不写入代码。
+                                Token 代表「由谁发送」：不配置好友令牌时，提醒只发到 Token 本人微信。Token 仅保存在本机并随提醒计划上报云端，不写入代码。
                             </div>
                         </div>
+                        <div class="form-row">
+                            <div class="sch-remind-switch-row">
+                                <div>
+                                    <div class="sch-remind-label">同时发送给自己</div>
+                                    <div class="sch-remind-desc">关闭后提醒只发给下方配置的好友令牌</div>
+                                </div>
+                                <span class="tab-toggle" id="schWxSelf" onclick="Schedule.toggleWxSelf()">
+                                    <span class="tab-toggle-knob"></span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label">好友令牌（同时发送给好友）</label>
+                            <div class="sch-remind-hint" style="margin-top:2px">
+                                给家人/其他微信也发提醒：让对方用微信扫你的 pushplus 二维码添加好友（加好友是双向的），再在 pushplus「好友列表」复制对方的<strong>好友令牌</strong>粘贴到下方（最多 10 个）。
+                            </div>
+                            <div id="schWxFriendList" style="margin-top:8px"></div>
+                            <button class="sync-btn" onclick="Schedule.addFriendRow()" style="margin-top:6px">＋ 添加好友</button>
+                        </div>
                         <div class="sync-actions" style="margin-top:8px">
-                            <button class="sync-btn" onclick="Schedule.saveWxConfig()">保存 Key</button>
+                            <button class="sync-btn" onclick="Schedule.saveWxConfig()">保存</button>
                             <button class="sync-btn" onclick="Schedule.cloudManualSync()">同步计划</button>
                             <button class="sync-btn" onclick="Schedule.sendCloudTest()">发送测试</button>
                         </div>
                         <div class="sync-actions" style="margin-top:8px">
-                            <button class="sync-btn sync-btn-danger" onclick="Schedule.clearWxConfig()">清除已保存的 Key</button>
+                            <button class="sync-btn sync-btn-danger" onclick="Schedule.clearWxConfig()">清除已保存的配置</button>
                         </div>
                     </div>
                     <div class="sch-remind-note">

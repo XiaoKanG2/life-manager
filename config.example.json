@@ -1,4 +1,5 @@
 {
   "provider": "pushplus",
-  "key": ""
+  "key": "",
+  "_comment": "key = 发送者本人 Token（PushPlus 用户令牌，发给自己用）。如需同时推送好友，请在 App「课表 → ⏰ 提醒 → 微信推送」界面填写好友令牌并随计划上报；也可在此处配置 friends（界面配置优先于此文件）。friends: [{ \"name\": \"家人\", \"token\": \"<好友令牌>\" }]，toSelf: false 表示不额外发给自己"
 }

@@ -246,3 +246,31 @@ select.note-input option[value=""] { color: #999; }
     line-height: 1.7;
     margin-top: 2px;
 }
+
+/* 微信推送：好友令牌配置 */
+.sch-friend-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.sch-friend-row .note-input {
+    flex: 1;
+    min-width: 0;
+}
+.sch-friend-row .sch-friend-name {
+    flex: 0 0 88px;
+}
+.sch-friend-del {
+    flex: 0 0 26px;
+    height: 26px;
+    line-height: 24px;
+    text-align: center;
+    border-radius: 50%;
+    color: #B0B8C0;
+    font-size: 13px;
+    background: #F2F4F7;
+    cursor: pointer;
+    user-select: none;
+}
+.sch-friend-del:active { background: var(--negative); color: #fff; }

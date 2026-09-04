@@ -36,6 +36,30 @@ function isConfigured(cfg) {
   return cfg.provider === 'pushplus' && !!cfg.key;
 }
 
+// 清洗/规范化设备上报的 wx 配置：
+//   { provider:'pushplus', key:<发送者本人 Token>, toSelf:<是否同时发给自己>,
+//     friends:[{name,token}] }（token=好友令牌，send 时拼 to 参数；pushplus 每次 ≤10 个）
+function normalizeWx(wx) {
+  if (!wx || wx.provider !== 'pushplus') {
+    return { provider: 'pushplus', key: '', toSelf: true, friends: [] };
+  }
+  const seen = {};
+  const friends = [];
+  (Array.isArray(wx.friends) ? wx.friends : []).forEach(f => {
+    if (!f || typeof f.token !== 'string') return;
+    const token = String(f.token).trim();
+    if (!token || seen[token] || friends.length >= 10) return;
+    seen[token] = 1;
+    friends.push({ name: String(f.name || '').trim().slice(0, 20), token: token.slice(0, 200) });
+  });
+  return {
+    provider: 'pushplus',
+    key: String(wx.key || '').trim().slice(0, 200),
+    toSelf: wx.toSelf !== false,
+    friends: friends
+  };
+}
+
 // ==================== 计划存储 ====================
 
 function loadPlans() {
@@ -61,7 +85,7 @@ function applySync(deviceId, plans, wx) {
       ts: Math.floor(p.ts),
       title: String(p.title || '上课提醒').slice(0, 40),
       body: String(p.body || '').slice(0, 160),
-      wx: wx && wx.provider === 'pushplus' && wx.key ? { provider: 'pushplus', key: String(wx.key).slice(0, 200) } : null
+      wx: (wx && wx.provider === 'pushplus' && wx.key) ? normalizeWx(wx) : null
     }))
     .sort((a, b) => a.ts - b.ts);
   store.devices[deviceId] = valid;
@@ -109,24 +133,46 @@ function httpsJson(method, host, apiPath, headers, body) {
   });
 }
 
+// 可注入的发送函数（单测时替换为 stub 校验请求体；默认走真实 HTTPS）
+let sendRequest = httpsJson;
+
+// 推送接收目标：自己（不带 to）+ 好友（带 to=逗号拼接好友令牌）
+function pushTargets(cfg) {
+  const targets = [];
+  if (cfg.toSelf !== false) targets.push({ kind: 'self', to: null });
+  const friends = (Array.isArray(cfg.friends) ? cfg.friends : [])
+    .filter(f => f && typeof f.token === 'string' && f.token.trim())
+    .slice(0, 10);
+  if (friends.length) targets.push({ kind: 'friends', to: friends.map(f => f.token.trim()).join(',') });
+  return targets;
+}
+
 async function firePush(p) {
   const ts = new Date().toISOString();
   console.log(ts, 'FIRE', p.title, '|', p.body);
-  // 优先设备级 key（界面填写随计划上报），无则回退 config.json
-  const cfg = (p.wx && isConfigured(p.wx)) ? p.wx : loadConfig();
-  if (!isConfigured(cfg)) return { ok: false, reason: 'not_configured' };
-  try {
-    const note = p.body + '\n—— 生活管家';
-    const res = await httpsJson('POST', 'www.pushplus.plus', '/send',
-      { 'Content-Type': 'application/json' },
-      JSON.stringify({ token: cfg.key, title: p.title, content: note }));
-    const ok = res.data ? (res.data.code === 0 || res.data.code === 200) : res.status === 200;
-    console.log(ts, 'PUSHED', ok ? 'OK' : 'HTTP_' + res.status, res.raw);
-    return { ok: !!ok };
-  } catch (e) {
-    console.error(ts, 'PUSH_FAIL', e.message);
-    return { ok: false, reason: e.message };
+  // 优先设备级配置（界面填写随计划上报），无则回退 config.json
+  const cfg = normalizeWx((p.wx && isConfigured(p.wx)) ? p.wx : loadConfig());
+  if (!isConfigured(cfg)) return { ok: false, reason: 'not_configured', results: [] };
+  const note = p.body + '\n—— 生活管家';
+  const results = [];
+  let anyOk = false;
+  for (const t of pushTargets(cfg)) {
+    const payload = { token: cfg.key, title: p.title, content: note };
+    if (t.to) payload.to = t.to; // 无 to = 发给自己（PushPlus 语义：token 为发送者本人）
+    try {
+      const res = await sendRequest('POST', 'www.pushplus.plus', '/send',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(payload));
+      const ok = res.data ? (res.data.code === 0 || res.data.code === 200) : res.status === 200;
+      results.push({ target: t.kind, to: t.to, ok: !!ok, code: res.data ? res.data.code : null, raw: String(res.raw).slice(0, 80) });
+      if (ok) anyOk = true;
+      console.log(ts, 'PUSH', t.kind, ok ? 'OK' : 'FAIL_' + (res.data ? res.data.code : res.status), String(res.raw).slice(0, 120));
+    } catch (e) {
+      results.push({ target: t.kind, to: t.to, ok: false, error: e.message });
+      console.error(ts, 'PUSH_FAIL', t.kind, e.message);
+    }
   }
+  return { ok: anyOk, results: results };
 }
 
 // ==================== 调度 ====================
@@ -152,7 +198,8 @@ function tick() {
   if (changed) persistPlans();
 }
 
-setInterval(tick, TICK_MS);
+// 定时调度仅在直接运行时启用（require 单测模式不启动，见文件底部 main guard）
+if (require.main === module) setInterval(tick, TICK_MS);
 
 // ==================== HTTP ====================
 
@@ -213,11 +260,20 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/api/remind/test' && req.method === 'POST') {
     const body = await readBody(req);
-    // 设备界面填写 key 优先，回退 config.json
-    const cfg = (body.wx && isConfigured(body.wx)) ? body.wx : loadConfig();
-    if (!isConfigured(cfg)) { json(res, 200, { ok: false, error: '未配置推送 Key：请在课表「⏰ 提醒 → 微信推送」中填写并保存' }); return; }
+    // 设备界面填写配置优先，回退 config.json；firePush 内部分发给自己/好友
     const r = await firePush({ ts: Date.now(), title: body.title || '测试', body: body.body || '云端推送测试', wx: body.wx && isConfigured(body.wx) ? body.wx : null });
-    json(res, 200, { ok: r.ok, error: r.ok ? undefined : (r.reason || 'send failed') });
+    let error;
+    if (!r.ok) {
+      if (r.reason === 'not_configured') {
+        error = '未配置推送 Key：请在课表「⏰ 提醒 → 微信推送」中填写并保存';
+      } else {
+        const fails = (r.results || []).map(x =>
+          (x.target === 'self' ? '自己' : '好友') + (x.ok ? '✅' : (x.code != null ? '（code=' + x.code + '）' : '（' + (x.error || '失败') + '）'))
+        ).join('；');
+        error = fails || '推送失败';
+      }
+    }
+    json(res, 200, { ok: r.ok, results: r.results || [], error: error });
     return;
   }
   if (p === '/api/remind/sync' && req.method === 'POST') {
@@ -236,7 +292,21 @@ const server = http.createServer(async (req, res) => {
   json(res, 405, { ok: false, error: 'method not allowed' });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  const cfg = loadConfig();
-  console.log('life-manager scheduler listening on :' + PORT, 'provider=' + cfg.provider, 'configured=' + isConfigured(cfg));
-});
+// ==================== 供单测（require 时不启动服务） ====================
+module.exports = {
+  normalizeWx: normalizeWx,
+  pushTargets: pushTargets,
+  applySync: applySync,
+  firePush: firePush,
+  isConfigured: isConfigured,
+  loadConfig: loadConfig,
+  store: store,
+  _setTransport: function (fn) { sendRequest = fn || httpsJson; }
+};
+
+if (require.main === module) {
+  server.listen(PORT, '0.0.0.0', () => {
+    const cfg = loadConfig();
+    console.log('life-manager scheduler listening on :' + PORT, 'provider=' + cfg.provider, 'configured=' + isConfigured(cfg));
+  });
+}

@@ -323,32 +323,21 @@
                         <div class="sch-remind-hint">未单独设置的课，统一按此时间提前提醒</div>
                     </div>
                     <div class="form-row">
-                        <label class="form-label">系统通知</label>
-                        <div class="sch-remind-perm" id="schRemindPerm"></div>
-                        <div class="sync-actions" style="margin-top:8px">
-                            <button class="sync-btn" onclick="Schedule.requestNotifyPermission()">开启系统通知</button>
-                            <button class="sync-btn" onclick="Schedule.sendTestNotification()">发送测试</button>
-                        </div>
-                    </div>
-                    <div class="form-row">
                         <label class="form-label">微信推送（锁屏也能收）</label>
                         <div class="sch-remind-perm" id="schCloudStatus">正在查询云端状态…</div>
                         <div class="sch-remind-hint" style="margin-top:4px">
                             提醒计划自动同步到云端，到点由云端推送到微信——即使 App 关闭 / 锁屏也能收到（鸿蒙 / 安卓 / iOS 均适用）。
                         </div>
-                        <div class="form-row" style="margin-top:8px">
+                        <div class="form-row">
                             <label class="form-label">推送通道</label>
-                            <select class="note-input" id="schWxProvider" onchange="Schedule.loadWxCfgIntoUI()">
-                                <option value="sct">Server酱（sct.ftqq.com）</option>
-                                <option value="pushplus">PushPlus（pushplus.plus）</option>
-                            </select>
+                            <div class="sch-remind-desc">PushPlus（pushplus.plus）· 微信扫码登录后复制 Token 粘贴下方</div>
                         </div>
                         <div class="form-row">
-                            <label class="form-label">SendKey / Token</label>
-                            <input type="text" class="note-input" id="schWxKey" placeholder="粘贴注册后复制的发送密钥" autocomplete="off">
+                            <label class="form-label">PushPlus Token</label>
+                            <input type="text" class="note-input" id="schWxKey" placeholder="粘贴 PushPlus 官网复制的 Token" autocomplete="off">
                             <div class="sch-remind-hint" style="margin-top:4px">
-                                获取方式：打开上方对应通道官网 → 微信扫码登录 → 复制发送密钥粘贴到此处。<br>
-                                Key 仅保存在本机，随提醒计划上报云端用于推送，不写入代码。
+                                获取方式：打开 pushplus.plus → 微信扫码登录 → 一对一推送 → 复制 Token 粘贴到此处。<br>
+                                Token 仅保存在本机，随提醒计划上报云端用于推送，不写入代码。
                             </div>
                         </div>
                         <div class="sync-actions" style="margin-top:8px">

@@ -4,11 +4,11 @@
 //   2. POST /api/remind/sync   接收设备上报的未来提醒计划（全量替换该设备）
 //   3. POST /api/remind/test   立即推送一条测试消息
 //   4. GET  /api/remind/status 查询云端配置/计划数/最近提醒时刻
-//   5. 每 20s tick：到点提醒 → 调微信推送通道（Server酱 / PushPlus）
+//   5. 每 20s tick：到点提醒 → 调微信推送通道（PushPlus）
 //
 // 推送配置优先级：
 //   1. 设备上报 wx（schedule.js 界面填写，localStorage 持久，随 sync/test 请求携带，快照进该设备计划）
-//   2. 同目录 config.json（不入 git，敏感）：{ "provider": "sct" | "pushplus", "key": "<SendKey / token>" }
+//   2. 同目录 config.json（不入 git，敏感）：{ "provider": "pushplus", "key": "<token>" }
 //   均未配置时默认 mock 模式（只打日志不发微信），/status 的 configured=false。
 //
 // 计划持久化：data/plans.json（尽力而为；容器重启后若文件系统保留则继续生效）
@@ -33,7 +33,7 @@ function loadConfig() {
 }
 
 function isConfigured(cfg) {
-  return (cfg.provider === 'sct' || cfg.provider === 'pushplus') && !!cfg.key;
+  return cfg.provider === 'pushplus' && !!cfg.key;
 }
 
 // ==================== 计划存储 ====================
@@ -61,7 +61,7 @@ function applySync(deviceId, plans, wx) {
       ts: Math.floor(p.ts),
       title: String(p.title || '上课提醒').slice(0, 40),
       body: String(p.body || '').slice(0, 160),
-      wx: (wx && wx.provider === 'sct' || wx && wx.provider === 'pushplus') && wx.key ? { provider: wx.provider, key: String(wx.key).slice(0, 200) } : null
+      wx: wx && wx.provider === 'pushplus' && wx.key ? { provider: 'pushplus', key: String(wx.key).slice(0, 200) } : null
     }))
     .sort((a, b) => a.ts - b.ts);
   store.devices[deviceId] = valid;
@@ -117,15 +117,9 @@ async function firePush(p) {
   if (!isConfigured(cfg)) return { ok: false, reason: 'not_configured' };
   try {
     const note = p.body + '\n—— 生活管家';
-    let res;
-    if (cfg.provider === 'sct') {
-      const q = new URLSearchParams({ title: p.title, desp: note });
-      res = await httpsJson('GET', 'sctapi.ftqq.com', '/' + cfg.key + '.send?' + q.toString());
-    } else {
-      res = await httpsJson('POST', 'www.pushplus.plus', '/send',
-        { 'Content-Type': 'application/json' },
-        JSON.stringify({ token: cfg.key, title: p.title, content: note }));
-    }
+    const res = await httpsJson('POST', 'www.pushplus.plus', '/send',
+      { 'Content-Type': 'application/json' },
+      JSON.stringify({ token: cfg.key, title: p.title, content: note }));
     const ok = res.data ? (res.data.code === 0 || res.data.code === 200) : res.status === 200;
     console.log(ts, 'PUSHED', ok ? 'OK' : 'HTTP_' + res.status, res.raw);
     return { ok: !!ok };

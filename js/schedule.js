@@ -738,38 +738,34 @@ const Schedule = (function () {
   }
 
   // ===== 微信推送通道配置（界面填写，同云端同步逻辑：本地存储 + 上报云端） =====
+  // 仅支持 PushPlus 单通道（provider 固定 pushplus，兼容旧 sct 数据自动迁移）
   function getWxCfg() {
     const c = loadJSON(WX_KEY, null) || {};
     return {
-      provider: (c.provider === 'sct' || c.provider === 'pushplus') ? c.provider : 'sct',
+      provider: 'pushplus',
       key: (typeof c.key === 'string') ? c.key : ''
     };
   }
 
-  function saveWxCfg(provider, key) {
-    localStorage.setItem(WX_KEY, JSON.stringify({ provider: provider, key: String(key || '').trim() }));
+  function saveWxCfg(key) {
+    localStorage.setItem(WX_KEY, JSON.stringify({ provider: 'pushplus', key: String(key || '').trim() }));
     cloudQueueSoon(); // 通道变化 → 带新 key 重新同步云端计划
   }
 
-  // 打开提醒弹窗时把已保存的通道配置回显到表单
+  // 打开提醒弹窗时把已保存的 key 回显到表单（通道固定 PushPlus，无需回显下拉）
   function loadWxCfgIntoUI() {
-    const pSel = document.getElementById('schWxProvider');
     const kInput = document.getElementById('schWxKey');
-    if (!pSel || !kInput) return;
-    const cfg = getWxCfg();
-    pSel.value = cfg.provider;
-    kInput.value = cfg.key;
+    if (!kInput) return;
+    kInput.value = getWxCfg().key;
   }
 
   // 读取界面表单保存：校验必填后持久化并提示
   function saveWxConfig() {
-    const pSel = document.getElementById('schWxProvider');
     const kInput = document.getElementById('schWxKey');
-    if (!pSel || !kInput) return;
-    const provider = pSel.value;
+    if (!kInput) return;
     const key = kInput.value.trim();
-    if (!key) { showToast('请先粘贴你的 SendKey / Token'); return; }
-    saveWxCfg(provider, key);
+    if (!key) { showToast('请先粘贴 PushPlus Token'); return; }
+    saveWxCfg(key);
     showToast('微信推送 Key 已保存并同步云端');
     cloudStatusRefresh();
   }
@@ -897,10 +893,9 @@ const Schedule = (function () {
     showRemindBanner(it.course, it.slot, Math.abs(diffMin), diffMin >= 0);
     playRemindBeep();
     playRemindVibrate();
-    notifyClass(it.course, it.slot);
   }
 
-  // ==================== 提醒横幅 / 音效 / 震动 / 系统通知 ====================
+  // ==================== 提醒横幅 / 音效 / 震动 ====================
 
   function showRemindBanner(course, slot, mins, upcoming) {
     removeRemindBanner();
@@ -954,35 +949,6 @@ const Schedule = (function () {
     try {
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 300]);
     } catch (e) {}
-  }
-
-  function notifySupported() { return 'Notification' in window; }
-
-  function notifyPermission() {
-    try {
-      return notifySupported() ? Notification.permission : 'unsupported';
-    } catch (e) { return 'unsupported'; }
-  }
-
-  function notifyClass(course, slot) {
-    if (!notifySupported() || Notification.permission !== 'granted') return;
-    try {
-      const body = (course.name || '') + (course.cls ? ' · ' + course.cls : '') + (course.room ? ' ' + course.room : '') + ' · ' + slotLabelOf(slot);
-      const n = new Notification('⏰ 上课提醒', { body: body, tag: 'sch-remind-' + slot });
-      n.onclick = function () { try { window.focus(); n.close(); } catch (e) {} };
-      setTimeout(function () { try { n.close(); } catch (e) {} }, 30000);
-    } catch (e) {}
-  }
-
-  function requestNotifyPermission() {
-    if (!notifySupported()) { showToast('当前浏览器不支持系统通知'); return; }
-    if (Notification.permission === 'granted') { showToast('系统通知已开启'); return; }
-    Notification.requestPermission().then(function (p) {
-      if (p === 'granted') showToast('已开启系统通知');
-      else if (p === 'denied') showToast('已拒绝，可到浏览器设置中重新开启');
-      else showToast('未授权，将仅 App 内提醒');
-      updateRemindPermText();
-    }).catch(function () {});
   }
 
   // 启动提醒引擎：App 打开后常驻自检（30s 兜底轮询 + 回到前台立即校准）
@@ -1052,20 +1018,9 @@ const Schedule = (function () {
       });
       leadSel.value = String(cfg.defaultLead || 0);
     }
-    updateRemindPermText();
     loadWxCfgIntoUI();
     document.getElementById('schRemindModal').classList.add('active');
     cloudStatusRefresh();
-  }
-
-  function updateRemindPermText() {
-    const el = document.getElementById('schRemindPerm');
-    if (!el) return;
-    const p = notifyPermission();
-    if (p === 'granted') el.textContent = '✅ 已开启：提醒会额外弹出系统通知';
-    else if (p === 'denied') el.textContent = '已拒绝：请到浏览器/系统设置中为本站开启通知';
-    else if (p === 'unsupported') el.textContent = '当前浏览器不支持系统通知，将仅 App 内提醒';
-    else el.textContent = '未开启：建议开启，锁屏后也有机会收到（需添加到主屏幕使用）';
   }
 
   function saveRemindSettings() {
@@ -1082,20 +1037,6 @@ const Schedule = (function () {
 
   function closeRemindSettings() {
     document.getElementById('schRemindModal').classList.remove('active');
-  }
-
-  function sendTestNotification() {
-    playRemindBeep();
-    playRemindVibrate();
-    if (notifySupported() && Notification.permission === 'granted') {
-      try {
-        const n = new Notification('⏰ 测试提醒', { body: '上课提醒通道正常，课程将按设置提前通知', tag: 'sch-remind-test' });
-        setTimeout(function () { try { n.close(); } catch (e) {} }, 15000);
-      } catch (e) {}
-      showToast('已发送测试通知');
-    } else {
-      showToast('已播放测试提示音；开启系统通知后可收到通知');
-    }
   }
 
   // ==================== 单节覆盖（课程弹窗内"上课提醒"下拉） ====================
@@ -1141,7 +1082,7 @@ const Schedule = (function () {
 
   // ==================== 云端推送同步（锁屏也能收） ====================
   // 机制：页面打开 / 课表或提醒配置变化时，把未来 14 天所有提醒时刻全量上报
-  // 给同源后端调度器（server.js）。云端到点调微信推送（Server酱/PushPlus），
+  // 给同源后端调度器（server.js）。云端到点调微信推送（PushPlus），
   // 手机即使完全关闭网页也能收到微信消息。上报失败静默，不影响本地提醒。
 
   function cloudDeviceId() {
@@ -1304,8 +1245,6 @@ const Schedule = (function () {
     closeRemindSettings: closeRemindSettings,
     saveRemindSettings: saveRemindSettings,
     toggleRemindEnabled: toggleRemindEnabled,
-    requestNotifyPermission: requestNotifyPermission,
-    sendTestNotification: sendTestNotification,
     bootReminder: bootReminder,
     // 云端推送（微信通道）
     cloudManualSync: cloudManualSync,

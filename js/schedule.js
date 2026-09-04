@@ -11,6 +11,9 @@ const Schedule = (function () {
   const TEMPLATE_KEY = 'schedule_template';
   const WEEKS_KEY = 'schedule_weeks';
   const LAST_INPUT_KEY = 'schedule_last_input';
+  const REMIND_KEY = 'schedule_remind_cfg';          // { enabled, defaultLead, perSlot }
+  const REMINDED_PREFIX = 'schedule_reminded_';       // 当日已提醒记录 schedule_reminded_YYYY-MM-DD
+  const REMIND_LEAD_CHOICES = [5, 10, 15, 20, 30];    // 可选的提前分钟数
   const TEMPLATE_ID = '__template__'; // 模板模式下周实例的虚拟 key
 
   const DAY_NAMES = ['星期一', '星期二', '星期三', '星期四', '星期五'];
@@ -90,6 +93,9 @@ const Schedule = (function () {
   let templateMode = false;
   let drag = null;            // 拖拽状态
   let modalCtx = null;        // { weekKey, slot } 当前编辑的格子
+  let remindTimer = null;     // 最近一次提醒的定时器
+  let remindInterval = null;  // 兜底轮询定时器
+  let remindAudioCtx = null;  // 提醒音效 AudioContext（iOS 需用户手势预热）
 
   // ==================== 工具 ====================
 
@@ -346,6 +352,7 @@ const Schedule = (function () {
 
     const slotLabel = slotLabelOf(slot);
     document.getElementById('schModalSlot').textContent = slotLabel;
+    fillRemindOptions(slot);
     document.getElementById('schCourseModal').classList.add('active');
   }
 
@@ -476,6 +483,7 @@ const Schedule = (function () {
     data[modalCtx.slot] = { name: name, cls: cls, room: room };
     saveData(modalCtx.weekKey, data);
     saveJSON(LAST_INPUT_KEY, { name: name, cls: cls, room: room });
+    applyRemindOverrideFromModal();
     showToast('已保存');
     closeModal();
     render();
@@ -486,6 +494,12 @@ const Schedule = (function () {
     const data = getData(modalCtx.weekKey);
     delete data[modalCtx.slot];
     saveData(modalCtx.weekKey, data);
+    // 同时清理该槽位的提醒覆盖
+    const cfg = getRemindCfg();
+    if (cfg.perSlot[modalCtx.slot] !== undefined) {
+      delete cfg.perSlot[modalCtx.slot];
+      saveRemindCfg(cfg);
+    }
     showToast('已删除');
     closeModal();
     render();
@@ -699,6 +713,372 @@ const Schedule = (function () {
     render();
   }
 
+  // ==================== 上课提醒引擎 ====================
+
+  function defaultRemindCfg() { return { enabled: true, defaultLead: 10, perSlot: {} }; }
+
+  function getRemindCfg() {
+    const c = loadJSON(REMIND_KEY, null) || {};
+    const d = defaultRemindCfg();
+    return {
+      enabled: c.enabled !== false,
+      defaultLead: (typeof c.defaultLead === 'number' && c.defaultLead >= 0) ? c.defaultLead : d.defaultLead,
+      perSlot: (c.perSlot && typeof c.perSlot === 'object') ? c.perSlot : {}
+    };
+  }
+
+  function saveRemindCfg(cfg) { saveJSON(REMIND_KEY, cfg); }
+
+  function remindedStorageKey(dateStr) { return REMINDED_PREFIX + dateStr; }
+
+  function getReminded(dateStr) {
+    const r = loadJSON(remindedStorageKey(dateStr), null);
+    return Array.isArray(r) ? r : [];
+  }
+
+  function markReminded(dateStr, slot) {
+    const list = getReminded(dateStr);
+    if (list.indexOf(slot) === -1) {
+      list.push(slot);
+      saveJSON(remindedStorageKey(dateStr), list);
+    }
+  }
+
+  // 某槽位的有效提前分钟数：null 表示该节不提醒（全局关闭 / 单节关闭 / 默认为 0）
+  function leadMinutesOf(slot) {
+    const cfg = getRemindCfg();
+    if (!cfg.enabled) return null;
+    const p = cfg.perSlot[slot];
+    if (p === 0) return null;
+    const lead = (typeof p === 'number' && p > 0) ? p : cfg.defaultLead;
+    return lead > 0 ? lead : null;
+  }
+
+  // slot 'dN_pM' → { day, period }
+  function periodOf(slot) {
+    const m = slot.match(/^d(\d)_p(\d)$/);
+    if (!m) return null;
+    return { day: parseInt(m[1], 10), period: parseInt(m[2], 10) };
+  }
+
+  // 节次开始分钟（0 点起算），如 '8:20' → 500
+  function periodStartMin(period) {
+    const per = PERIODS[period - 1];
+    if (!per) return null;
+    const hm = per.time.split('~')[0].split(':');
+    return parseInt(hm[0], 10) * 60 + parseInt(hm[1], 10);
+  }
+
+  function dateMsOf(minuteOfDay) {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate(), 0, minuteOfDay, 0, 0).getTime();
+  }
+
+  // 今天需要提醒的课（周末/无课/已关闭提醒的跳过）
+  function todayRemindItems() {
+    const n = new Date();
+    const dow = n.getDay(); // 0=周日
+    if (dow === 0 || dow > 5) return [];
+    const data = getWeekData(weekKeyOf(0)); // 本周实例（不存在则自动从模板初始化）
+    const items = [];
+    Object.keys(data).forEach(function (slot) {
+      const m = periodOf(slot);
+      const course = data[slot];
+      if (!m || m.day !== dow || !course || !course.name) return;
+      const startMin = periodStartMin(m.period);
+      if (startMin === null) return;
+      const lead = leadMinutesOf(slot);
+      if (lead === null) return;
+      items.push({
+        slot: slot,
+        course: course,
+        startMs: dateMsOf(startMin),
+        remindMs: dateMsOf(startMin) - lead * 60000
+      });
+    });
+    return items;
+  }
+
+  function runReminderCheck() {
+    const cfg = getRemindCfg();
+    if (!cfg.enabled) { clearRemindTimer(); return; }
+    const now = Date.now();
+    const todayStr = fmtDate(new Date());
+    const reminded = getReminded(todayStr);
+    const items = todayRemindItems();
+    let nearest = null;
+
+    items.forEach(function (it) {
+      if (reminded.indexOf(it.slot) !== -1) return;
+      if (now >= it.remindMs) {
+        // 到点（或打开时已错过）：只在"开课后 30 分钟"内补报，太久则静默标记
+        if (now <= it.startMs + 30 * 60000) {
+          fireReminder(it, now);
+        } else {
+          markReminded(todayStr, it.slot);
+        }
+      } else if (!nearest || it.remindMs < nearest.remindMs) {
+        nearest = it;
+      }
+    });
+
+    scheduleNextReminder(nearest);
+  }
+
+  function scheduleNextReminder(item) {
+    clearRemindTimer();
+    if (!item) return;
+    const delay = item.remindMs - Date.now();
+    if (delay <= 0) return;
+    // 定时器到点后重扫（fire 决策以实时课表为准，避免课程被改后误提醒）
+    remindTimer = setTimeout(runReminderCheck, Math.min(delay, 2147483647));
+  }
+
+  function clearRemindTimer() {
+    if (remindTimer) { clearTimeout(remindTimer); remindTimer = null; }
+  }
+
+  function fireReminder(it, nowMs) {
+    const todayStr = fmtDate(new Date());
+    markReminded(todayStr, it.slot);
+    const diffMin = Math.round((it.startMs - nowMs) / 60000); // >0 未上课
+    showRemindBanner(it.course, it.slot, Math.abs(diffMin), diffMin >= 0);
+    playRemindBeep();
+    playRemindVibrate();
+    notifyClass(it.course, it.slot);
+  }
+
+  // ==================== 提醒横幅 / 音效 / 震动 / 系统通知 ====================
+
+  function showRemindBanner(course, slot, mins, upcoming) {
+    removeRemindBanner();
+    const banner = document.createElement('div');
+    banner.className = 'remind-banner' + (upcoming ? '' : ' remind-banner-late');
+    const t = document.createElement('div');
+    t.className = 'remind-banner-title';
+    t.textContent = upcoming ? (mins > 0 ? ('⏰ ' + mins + ' 分钟后上课') : '⏰ 马上上课') : ('已上课 ' + mins + ' 分钟');
+    const d = document.createElement('div');
+    d.className = 'remind-banner-course';
+    d.textContent = (course.name || '') + (course.cls ? ' · ' + course.cls : '') + (course.room ? ' ' + course.room : '') + ' · ' + slotLabelOf(slot);
+    banner.appendChild(t);
+    banner.appendChild(d);
+    banner.addEventListener('click', removeRemindBanner);
+    document.body.appendChild(banner);
+    window.__remindBannerTimer = setTimeout(removeRemindBanner, 9000);
+  }
+
+  function removeRemindBanner() {
+    const b = document.querySelector('.remind-banner');
+    if (b && b.parentNode) b.parentNode.removeChild(b);
+    if (window.__remindBannerTimer) { clearTimeout(window.__remindBannerTimer); window.__remindBannerTimer = null; }
+  }
+
+  // iOS 静音开关关闭时 WebAudio 才能出声；需先有用户手势创建并激活 AudioContext
+  function playRemindBeep() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!remindAudioCtx) remindAudioCtx = new AC();
+      const ctx = remindAudioCtx;
+      if (ctx.state === 'suspended') ctx.resume();
+      [0, 0.35, 0.7].forEach(function (off) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.type = 'sine';
+        o.frequency.value = 880;
+        const t0 = ctx.currentTime + off;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3);
+        o.start(t0);
+        o.stop(t0 + 0.32);
+      });
+    } catch (e) {}
+  }
+
+  function playRemindVibrate() {
+    try {
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 300]);
+    } catch (e) {}
+  }
+
+  function notifySupported() { return 'Notification' in window; }
+
+  function notifyPermission() {
+    try {
+      return notifySupported() ? Notification.permission : 'unsupported';
+    } catch (e) { return 'unsupported'; }
+  }
+
+  function notifyClass(course, slot) {
+    if (!notifySupported() || Notification.permission !== 'granted') return;
+    try {
+      const body = (course.name || '') + (course.cls ? ' · ' + course.cls : '') + (course.room ? ' ' + course.room : '') + ' · ' + slotLabelOf(slot);
+      const n = new Notification('⏰ 上课提醒', { body: body, tag: 'sch-remind-' + slot });
+      n.onclick = function () { try { window.focus(); n.close(); } catch (e) {} };
+      setTimeout(function () { try { n.close(); } catch (e) {} }, 30000);
+    } catch (e) {}
+  }
+
+  function requestNotifyPermission() {
+    if (!notifySupported()) { showToast('当前浏览器不支持系统通知'); return; }
+    if (Notification.permission === 'granted') { showToast('系统通知已开启'); return; }
+    Notification.requestPermission().then(function (p) {
+      if (p === 'granted') showToast('已开启系统通知');
+      else if (p === 'denied') showToast('已拒绝，可到浏览器设置中重新开启');
+      else showToast('未授权，将仅 App 内提醒');
+      updateRemindPermText();
+    }).catch(function () {});
+  }
+
+  // 启动提醒引擎：App 打开后常驻自检（30s 兜底轮询 + 回到前台立即校准）
+  function bootReminder() {
+    try {
+      runReminderCheck();
+      if (!remindInterval) remindInterval = setInterval(runReminderCheck, 30000);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) runReminderCheck();
+      });
+      window.addEventListener('focus', function () { runReminderCheck(); });
+      // iOS：首次触摸即预热 AudioContext，保证后续到点能出声
+      document.addEventListener('touchstart', function warmAudio() {
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (AC && !remindAudioCtx) {
+            remindAudioCtx = new AC();
+            if (remindAudioCtx.state === 'suspended') remindAudioCtx.resume();
+          }
+        } catch (e) {}
+      }, { once: true, passive: true });
+    } catch (e) {}
+  }
+
+  // ==================== 提醒设置弹窗 ====================
+
+  function updateRemindStatusText() {
+    const on = document.getElementById('schRemindOn');
+    const st = document.getElementById('schRemindStatusText');
+    if (!on || !st) return;
+    const en = on.classList.contains('on');
+    st.textContent = en ? '开启后按节次时间提前提醒' : '已暂停，将不再提醒上课';
+  }
+
+  function toggleRemindEnabled() {
+    const on = document.getElementById('schRemindOn');
+    if (!on) return;
+    on.classList.toggle('on');
+    updateRemindStatusText();
+  }
+
+  function openRemindSettings() {
+    const cfg = getRemindCfg();
+    const on = document.getElementById('schRemindOn');
+    const leadSel = document.getElementById('schRemindLead');
+    if (on) {
+      on.classList.toggle('on', !!cfg.enabled);
+      updateRemindStatusText();
+    }
+    if (leadSel) {
+      leadSel.innerHTML = '';
+      const opt0 = document.createElement('option');
+      opt0.value = '0';
+      opt0.textContent = '默认不提醒';
+      leadSel.appendChild(opt0);
+      REMIND_LEAD_CHOICES.forEach(function (m) {
+        const o = document.createElement('option');
+        o.value = String(m);
+        o.textContent = '提前 ' + m + ' 分钟';
+        leadSel.appendChild(o);
+      });
+      leadSel.value = String(cfg.defaultLead || 0);
+    }
+    updateRemindPermText();
+    document.getElementById('schRemindModal').classList.add('active');
+  }
+
+  function updateRemindPermText() {
+    const el = document.getElementById('schRemindPerm');
+    if (!el) return;
+    const p = notifyPermission();
+    if (p === 'granted') el.textContent = '✅ 已开启：提醒会额外弹出系统通知';
+    else if (p === 'denied') el.textContent = '已拒绝：请到浏览器/系统设置中为本站开启通知';
+    else if (p === 'unsupported') el.textContent = '当前浏览器不支持系统通知，将仅 App 内提醒';
+    else el.textContent = '未开启：建议开启，锁屏后也有机会收到（需添加到主屏幕使用）';
+  }
+
+  function saveRemindSettings() {
+    const on = document.getElementById('schRemindOn');
+    const leadSel = document.getElementById('schRemindLead');
+    const cfg = getRemindCfg();
+    if (on) cfg.enabled = on.classList.contains('on');
+    if (leadSel) cfg.defaultLead = parseInt(leadSel.value, 10) || 0;
+    saveRemindCfg(cfg);
+    showToast('提醒设置已保存');
+    closeRemindSettings();
+    runReminderCheck();
+  }
+
+  function closeRemindSettings() {
+    document.getElementById('schRemindModal').classList.remove('active');
+  }
+
+  function sendTestNotification() {
+    playRemindBeep();
+    playRemindVibrate();
+    if (notifySupported() && Notification.permission === 'granted') {
+      try {
+        const n = new Notification('⏰ 测试提醒', { body: '上课提醒通道正常，课程将按设置提前通知', tag: 'sch-remind-test' });
+        setTimeout(function () { try { n.close(); } catch (e) {} }, 15000);
+      } catch (e) {}
+      showToast('已发送测试通知');
+    } else {
+      showToast('已播放测试提示音；开启系统通知后可收到通知');
+    }
+  }
+
+  // ==================== 单节覆盖（课程弹窗内"上课提醒"下拉） ====================
+
+  function fillRemindOptions(slot) {
+    const sel = document.getElementById('schCourseRemind');
+    if (!sel) return;
+    const cfg = getRemindCfg();
+    sel.innerHTML = '';
+    const followText = cfg.defaultLead > 0 ? ('跟随默认（提前 ' + cfg.defaultLead + ' 分钟）') : '跟随默认（不提醒）';
+    const optF = document.createElement('option');
+    optF.value = '';
+    optF.textContent = followText;
+    sel.appendChild(optF);
+    REMIND_LEAD_CHOICES.forEach(function (m) {
+      const o = document.createElement('option');
+      o.value = String(m);
+      o.textContent = '提前 ' + m + ' 分钟';
+      sel.appendChild(o);
+    });
+    const optOff = document.createElement('option');
+    optOff.value = '0';
+    optOff.textContent = '本节课不提醒';
+    sel.appendChild(optOff);
+    const cur = cfg.perSlot[slot];
+    if (cur === 0) sel.value = '0';
+    else if (typeof cur === 'number' && cur > 0) sel.value = String(cur);
+    else sel.value = '';
+  }
+
+  function onRemindChange() {} // select 状态由 saveCourse 统一提交
+
+  // 保存课程时把"上课提醒"下拉选择写入该槽位的提醒覆盖
+  function applyRemindOverrideFromModal() {
+    const sel = document.getElementById('schCourseRemind');
+    if (!sel || !modalCtx) return;
+    const cfg = getRemindCfg();
+    const v = sel.value;
+    if (v === '') delete cfg.perSlot[modalCtx.slot];
+    else cfg.perSlot[modalCtx.slot] = parseInt(v, 10) || 0;
+    saveRemindCfg(cfg);
+  }
+
   // ==================== 公开 API ====================
 
   return {
@@ -709,12 +1089,21 @@ const Schedule = (function () {
     saveCourse: saveCourse,
     deleteCourse: deleteCourse,
     onClassChange: onClassSelectChange,
-    onRoomChange: onRoomSelectChange
+    onRoomChange: onRoomSelectChange,
+    onRemindChange: onRemindChange,
+    openRemindSettings: openRemindSettings,
+    closeRemindSettings: closeRemindSettings,
+    saveRemindSettings: saveRemindSettings,
+    toggleRemindEnabled: toggleRemindEnabled,
+    requestNotifyPermission: requestNotifyPermission,
+    sendTestNotification: sendTestNotification,
+    bootReminder: bootReminder,
+    // 仅供测试/调试
+    _runCheck: runReminderCheck,
+    _cfg: getRemindCfg,
+    _leadOf: leadMinutesOf
   };
 })();
 
 // 挂到 window，确保 inline onclick 与外部访问可靠
 window.Schedule = Schedule;
-
-// 初始化：旧数据补充机房号（班级下拉切换用 inline onchange 绑定）
-migrateRoomData();

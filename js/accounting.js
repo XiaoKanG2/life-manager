@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.12';
+const APP_VERSION = '5.13';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -548,6 +548,8 @@ async function init() {
     updateSyncBadge();
     registerServiceWorker();
     requestPersistentStorage();
+    // 启动课表上课提醒引擎（默认页非课表时也常驻自检）
+    if (typeof Schedule !== 'undefined' && Schedule.bootReminder) Schedule.bootReminder();
 
     // 尝试从 IndexedDB 恢复 syncConfig（如果 localStorage 被清除）
     const recovered = await tryRecoverSyncConfigFromIDB();

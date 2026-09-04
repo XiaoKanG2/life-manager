@@ -1,5 +1,5 @@
 // 缓存版本：必须与 js/accounting.js 中的 APP_VERSION 保持一致
-const CACHE_NAME = 'life-manager-v5.12';
+const CACHE_NAME = 'life-manager-v5.13';
 const ASSETS = [
     './',
     './index.html',

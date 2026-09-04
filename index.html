@@ -193,7 +193,10 @@
         <div class="page page-schedule" id="page-schedule">
             <div class="nav-bar with-actions">
                 <span class="nav-title">课表</span>
-                <span class="sch-nav-btn" id="schTemplateToggle" onclick="Schedule.toggleTemplateMode()">编辑模板</span>
+                <span class="sch-nav-actions">
+                    <span class="sch-nav-btn" onclick="Schedule.openRemindSettings()">⏰ 提醒</span>
+                    <span class="sch-nav-btn" id="schTemplateToggle" onclick="Schedule.toggleTemplateMode()">编辑模板</span>
+                </span>
             </div>
             <div class="sch-tip" id="schTip"></div>
             <div id="schContent"></div>
@@ -276,8 +279,54 @@
                         <select class="note-input" id="schCourseRoom" onchange="Schedule.onRoomChange()"></select>
                         <input type="text" class="note-input" id="schCourseRoomCustom" placeholder="输入机房号，如：④" maxlength="6" style="display:none;margin-top:8px">
                     </div>
+                    <div class="form-row">
+                        <label class="form-label">上课提醒</label>
+                        <select class="note-input" id="schCourseRemind" onchange="Schedule.onRemindChange()"></select>
+                        <div class="sch-remind-hint">该节课的提醒时间，不选则跟随全局默认</div>
+                    </div>
                     <div class="sync-actions" id="schDelRow" style="display:none">
                         <button class="sync-btn sync-btn-danger" onclick="Schedule.deleteCourse()">🗑️ 删除该课程</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 上课提醒设置弹窗 ========== -->
+        <div class="modal-overlay" id="schRemindModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="Schedule.closeRemindSettings()">✕</span>
+                    <span class="modal-title">上课提醒</span>
+                    <span class="modal-save" onclick="Schedule.saveRemindSettings()">保存</span>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="sch-remind-switch-row">
+                            <div>
+                                <div class="sch-remind-label">启用上课提醒</div>
+                                <div class="sch-remind-desc" id="schRemindStatusText">开启后按节次时间提醒</div>
+                            </div>
+                            <span class="tab-toggle" id="schRemindOn" onclick="Schedule.toggleRemindEnabled()">
+                                <span class="tab-toggle-knob"></span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">默认提醒时间</label>
+                        <select class="note-input" id="schRemindLead"></select>
+                        <div class="sch-remind-hint">未单独设置的课，统一按此时间提前提醒</div>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">系统通知</label>
+                        <div class="sch-remind-perm" id="schRemindPerm"></div>
+                        <div class="sync-actions" style="margin-top:8px">
+                            <button class="sync-btn" onclick="Schedule.requestNotifyPermission()">开启系统通知</button>
+                            <button class="sync-btn" onclick="Schedule.sendTestNotification()">发送测试</button>
+                        </div>
+                    </div>
+                    <div class="sch-remind-note">
+                        使用 App 期间到点弹提醒（横幅 + 声音 + 震动）；错过的时间点会在下次打开时补报。
+                        锁屏或应用被关闭后，浏览器可能无法按时推送——系统通知可尽量送达。
                     </div>
                 </div>
             </div>

@@ -324,9 +324,21 @@
                             <button class="sync-btn" onclick="Schedule.sendTestNotification()">发送测试</button>
                         </div>
                     </div>
+                    <div class="form-row">
+                        <label class="form-label">微信推送（锁屏也能收）</label>
+                        <div class="sch-remind-perm" id="schCloudStatus">正在查询云端状态…</div>
+                        <div class="sch-remind-hint" style="margin-top:4px">
+                            提醒计划会自动同步到云端，到点由云端推送到微信（鸿蒙/安卓/iOS 均适用），
+                            即使 App 关闭也能收到。
+                        </div>
+                        <div class="sync-actions" style="margin-top:8px">
+                            <button class="sync-btn" onclick="Schedule.cloudManualSync()">同步云端计划</button>
+                            <button class="sync-btn" onclick="Schedule.sendCloudTest()">发送微信测试</button>
+                        </div>
+                    </div>
                     <div class="sch-remind-note">
                         使用 App 期间到点弹提醒（横幅 + 声音 + 震动）；错过的时间点会在下次打开时补报。
-                        锁屏或应用被关闭后，浏览器可能无法按时推送——系统通知可尽量送达。
+                        开启微信推送后，锁屏或应用被关闭也能收到微信消息提醒。
                     </div>
                 </div>
             </div>

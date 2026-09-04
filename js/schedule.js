@@ -14,6 +14,7 @@ const Schedule = (function () {
   const REMIND_KEY = 'schedule_remind_cfg';          // { enabled, defaultLead, perSlot }
   const REMINDED_PREFIX = 'schedule_reminded_';       // 当日已提醒记录 schedule_reminded_YYYY-MM-DD
   const REMIND_LEAD_CHOICES = [5, 10, 15, 20, 30];    // 可选的提前分钟数
+  const CLOUD_KEY = 'schedule_cloud';                 // { deviceId, lastSyncAt } 云端推送登记
   const TEMPLATE_ID = '__template__'; // 模板模式下周实例的虚拟 key
 
   const DAY_NAMES = ['星期一', '星期二', '星期三', '星期四', '星期五'];
@@ -96,6 +97,8 @@ const Schedule = (function () {
   let remindTimer = null;     // 最近一次提醒的定时器
   let remindInterval = null;  // 兜底轮询定时器
   let remindAudioCtx = null;  // 提醒音效 AudioContext（iOS 需用户手势预热）
+  let cloudTimer = null;      // 云端计划同步防抖定时器
+  let cloudLastSyncAt = 0;    // 上次云端同步成功时间戳
 
   // ==================== 工具 ====================
 
@@ -167,6 +170,7 @@ const Schedule = (function () {
   function saveData(weekKey, data) {
     if (weekKey === TEMPLATE_ID) saveTemplate(data);
     else saveWeek(weekKey, data);
+    cloudQueueSoon(); // 课表变化 → 重新同步云端提醒计划
   }
 
   async function resetWeek(weekKey) {
@@ -727,7 +731,10 @@ const Schedule = (function () {
     };
   }
 
-  function saveRemindCfg(cfg) { saveJSON(REMIND_KEY, cfg); }
+  function saveRemindCfg(cfg) {
+    saveJSON(REMIND_KEY, cfg);
+    cloudQueueSoon(); // 提醒设置变化 → 重新同步云端
+  }
 
   function remindedStorageKey(dateStr) { return REMINDED_PREFIX + dateStr; }
 
@@ -939,9 +946,15 @@ const Schedule = (function () {
       runReminderCheck();
       if (!remindInterval) remindInterval = setInterval(runReminderCheck, 30000);
       document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) runReminderCheck();
+        if (!document.hidden) {
+          runReminderCheck();
+          // 回前台且距上次云端同步超 1 小时 → 重新上报提醒计划
+          if (Date.now() - cloudLastSyncAt > 3600000) syncCloudPlan(false);
+        }
       });
       window.addEventListener('focus', function () { runReminderCheck(); });
+      // 启动后把未来 14 天提醒计划上报云端（失败静默；云端调度保证锁屏/关页后仍推送）
+      setTimeout(function () { syncCloudPlan(false); }, 2500);
       // iOS：首次触摸即预热 AudioContext，保证后续到点能出声
       document.addEventListener('touchstart', function warmAudio() {
         try {
@@ -996,6 +1009,7 @@ const Schedule = (function () {
     }
     updateRemindPermText();
     document.getElementById('schRemindModal').classList.add('active');
+    cloudStatusRefresh();
   }
 
   function updateRemindPermText() {
@@ -1079,6 +1093,130 @@ const Schedule = (function () {
     saveRemindCfg(cfg);
   }
 
+  // ==================== 云端推送同步（锁屏也能收） ====================
+  // 机制：页面打开 / 课表或提醒配置变化时，把未来 14 天所有提醒时刻全量上报
+  // 给同源后端调度器（server.js）。云端到点调微信推送（Server酱/PushPlus），
+  // 手机即使完全关闭网页也能收到微信消息。上报失败静默，不影响本地提醒。
+
+  function cloudDeviceId() {
+    const c = loadJSON(CLOUD_KEY, null);
+    if (c && c.deviceId) return c.deviceId;
+    const id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    // 直写 localStorage，避免经 saveJSON 触发云同步钩子造成循环
+    localStorage.setItem(CLOUD_KEY, JSON.stringify({ deviceId: id, lastSyncAt: 0 }));
+    return id;
+  }
+
+  function cloudApiBase() {
+    try { return location.origin; } catch (e) { return null; }
+  }
+
+  // 未来 14 天提醒计划（节次上课时刻 − 提前量），跨周实例自动展开
+  function buildCloudPlan() {
+    const cfg = getRemindCfg();
+    const plans = [];
+    if (!cfg.enabled) return plans; // 总开关关闭 → 空计划让云端清空旧提醒
+    const now = new Date();
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+      const dow = d.getDay();
+      if (dow === 0 || dow > 5) continue;
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - (dow - 1));
+      const data = getWeekData(fmtDate(mon)); // 懒初始化周实例
+      const dateStr = fmtDate(d);
+      for (let p = 1; p <= PERIODS.length; p++) {
+        const slot = 'd' + dow + '_p' + p;
+        const course = data[slot];
+        if (!course || !course.name) continue;
+        const startMin = periodStartMin(p);
+        const lead = leadMinutesOf(slot);
+        if (startMin === null || lead === null) continue;
+        const startMs = new Date(dateStr + 'T00:00:00').getTime() + startMin * 60000;
+        const leadText = lead >= 60 ? (Math.floor(lead / 60) + ' 小时' + (lead % 60 ? ' ' + (lead % 60) + ' 分钟' : '')) : (lead + ' 分钟');
+        plans.push({
+          ts: startMs - lead * 60000,
+          title: '⏰ 还有 ' + leadText + ' 上课',
+          body: course.name + (course.cls ? ' · ' + course.cls : '') + (course.room ? ' ' + course.room : '') + ' · ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + '（' + PERIODS[p - 1].time.split('~')[0] + ' 上课）'
+        });
+      }
+    }
+    return plans;
+  }
+
+  // 课表/配置变化后 3s 防抖触发一次云端同步
+  function cloudQueueSoon() {
+    if (cloudTimer) clearTimeout(cloudTimer);
+    cloudTimer = setTimeout(function () { syncCloudPlan(false); }, 3000);
+  }
+
+  function syncCloudPlan(force) {
+    if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = null; }
+    const base = cloudApiBase();
+    if (!base) return;
+    const nowMs = Date.now();
+    if (!force && nowMs - cloudLastSyncAt < 3600000) return; // 非强制 1 小时内最多一次
+    const payload = { deviceId: cloudDeviceId(), plans: buildCloudPlan() };
+    fetch(base + '/api/remind/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (res) {
+        if (res && res.ok) {
+          cloudLastSyncAt = Date.now();
+          localStorage.setItem(CLOUD_KEY, JSON.stringify({ deviceId: cloudDeviceId(), lastSyncAt: cloudLastSyncAt }));
+        }
+      }).catch(function () {});
+  }
+
+  function cloudManualSync() {
+    showToast('正在同步提醒计划到云端…');
+    syncCloudPlan(true);
+    setTimeout(cloudStatusRefresh, 800);
+  }
+
+  function cloudStatusRefresh() {
+    const el = document.getElementById('schCloudStatus');
+    if (!el) return;
+    const base = cloudApiBase();
+    if (!base) { el.textContent = '⚠️ 非在线环境：未连接云端调度服务'; return; }
+    el.textContent = '正在查询云端状态…';
+    fetch(base + '/api/remind/status', { cache: 'no-store' })
+      .then(function (r) { return r.json().catch(function () { return null; }); })
+      .then(function (res) {
+        if (!res) { el.textContent = '云端服务未响应（本地/离线可忽略）'; return; }
+        if (!res.configured) { el.textContent = '⚠️ 云端尚未配置推送密钥（部署时写入 config.json）'; return; }
+        const n = res.plans || 0;
+        let t = '无';
+        if (res.nextFireAt) {
+          const nt = new Date(res.nextFireAt);
+          t = (nt.getMonth() + 1) + '月' + nt.getDate() + '日 ' + String(nt.getHours()).padStart(2, '0') + ':' + String(nt.getMinutes()).padStart(2, '0');
+        }
+        el.textContent = '✅ 云端就绪 · 已排 ' + n + ' 条 · 最近提醒 ' + t;
+      })
+      .catch(function () { el.textContent = '云端服务未响应（本地/离线可忽略）'; });
+  }
+
+  function sendCloudTest() {
+    const base = cloudApiBase();
+    if (!base) { showToast('非在线环境，无法发送'); return; }
+    showToast('已发送微信测试，请查看手机微信…');
+    fetch(base + '/api/remind/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: cloudDeviceId(),
+        title: '✅ 生活管家提醒通道测试',
+        body: '云端微信推送正常，课程提醒将在上课前准时送达。\n—— 生活管家 · ' + new Date().toLocaleString('zh-CN', { hour12: false })
+      })
+    }).then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (res) {
+        if (res && res.ok) showToast('✅ 已发送，请在微信「服务号消息」查看');
+        else showToast(res && res.error ? res.error : '云端未配置推送密钥，稍后再试');
+      }).catch(function () { showToast('发送失败：云端服务不可达'); });
+  }
+
   // ==================== 公开 API ====================
 
   return {
@@ -1098,10 +1236,15 @@ const Schedule = (function () {
     requestNotifyPermission: requestNotifyPermission,
     sendTestNotification: sendTestNotification,
     bootReminder: bootReminder,
+    // 云端推送（微信通道）
+    cloudManualSync: cloudManualSync,
+    cloudStatusRefresh: cloudStatusRefresh,
+    sendCloudTest: sendCloudTest,
     // 仅供测试/调试
     _runCheck: runReminderCheck,
     _cfg: getRemindCfg,
-    _leadOf: leadMinutesOf
+    _leadOf: leadMinutesOf,
+    _buildPlan: buildCloudPlan
   };
 })();
 

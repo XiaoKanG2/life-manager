@@ -1,0 +1,8 @@
+{
+  "name": "life-manager",
+  "version": "5.14.0",
+  "private": true,
+  "description": "生活管家 - 资产盘点 / 生日 / 课表（含云端上课提醒调度）",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" }
+}

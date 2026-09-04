@@ -1,5 +1,5 @@
 // 缓存版本：必须与 js/accounting.js 中的 APP_VERSION 保持一致
-const CACHE_NAME = 'life-manager-v5.13';
+const CACHE_NAME = 'life-manager-v5.14';
 const ASSETS = [
     './',
     './index.html',
@@ -55,6 +55,11 @@ self.addEventListener('fetch', (event) => {
 
     // Supabase API 请求：直接走网络
     if (url.includes('supabase.co')) {
+        return;
+    }
+
+    // 同源云端 API（提醒计划同步/状态/测试）：直接走网络，避免命中旧缓存
+    if (url.includes('/api/')) {
         return;
     }
 

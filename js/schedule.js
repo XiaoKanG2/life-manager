@@ -1268,6 +1268,28 @@ const Schedule = (function () {
 
   // ==================== 公开 API ====================
 
+  // 模板导出/导入（供课表独立 key 云同步使用）
+  function getTemplateData() { return deepCopy(getTemplate()); }
+  function importTemplateData(tpl) {
+    if (!tpl || typeof tpl !== 'object' || Array.isArray(tpl)) return false;
+    let n = 0;
+    Object.keys(tpl).forEach(function (slot) {
+      const c = tpl[slot];
+      if (c && typeof c === 'object' && c.name && /^d[1-5]_p[1-7]$/.test(slot)) n++;
+    });
+    if (n === 0) return false;
+    // 直写 localStorage：只覆盖模板，已生成的周实例保持不被覆盖（沿用懒初始化语义）
+    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(tpl));
+    cloudQueueSoon(); // 模板变化 → 提醒计划跟随新模板重新上报
+    render();
+    return true;
+  }
+  // 清空所有周实例（「以云端为准」恢复课表时用）：下次渲染按模板重新懒生成
+  function clearWeekInstances() {
+    localStorage.removeItem(WEEKS_KEY);
+    render();
+  }
+
   return {
     render: render,
     toggleTemplateMode: toggleTemplateMode,
@@ -1294,6 +1316,10 @@ const Schedule = (function () {
     clearWxConfig: clearWxConfig,
     loadWxCfgIntoUI: loadWxCfgIntoUI,
     getWxCfg: getWxCfg,
+    // 课表云同步（独立 key）
+    getTemplateData: getTemplateData,
+    importTemplateData: importTemplateData,
+    clearWeekInstances: clearWeekInstances,
     // 仅供测试/调试
     _runCheck: runReminderCheck,
     _cfg: getRemindCfg,

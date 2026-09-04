@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.15';
+const APP_VERSION = '5.16';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -546,6 +546,7 @@ async function init() {
     if (firstVisible) switchPage(firstVisible.id);
     updateAllViews();
     updateSyncBadge();
+    if (typeof updateSchSyncBadge === 'function') updateSchSyncBadge();
     registerServiceWorker();
     requestPersistentStorage();
     // 启动课表上课提醒引擎（默认页非课表时也常驻自检）
@@ -1951,6 +1952,166 @@ function setSyncIndicator(state) {
   const indicator = document.getElementById('syncIndicator');
   if (!indicator) return;
   indicator.className = 'sync-indicator ' + state;
+}
+
+// ==================== 课表云端同步（独立 key） ====================
+// 与资产/生日分开：独立配置 schedule_sync_config（localStorage）与独立 sync_key 行
+//   —— 课表 sync_key = 用户另填的密钥 + '__schedule'
+// 同步内容 = 课表模板 schedule_template（跨设备权威数据）；
+// 周实例（schedule_weeks）为模板派生的本地临时态：普通下载不影响，
+// 「以云端为准」才会清空周实例重新从云端模板生成。
+const SCH_SYNC_CONFIG_KEY = 'schedule_sync_config';
+let _schClient = null;
+
+function getSchSyncConfig() {
+  const saved = localStorage.getItem(SCH_SYNC_CONFIG_KEY);
+  if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+  // 未单独保存时继承资产的 url/key（课表只需另填独立同步密钥），资产未配置则为空
+  const base = getSyncConfig();
+  return { url: base.url || '', key: base.key || '', syncKey: '' };
+}
+
+function setSchSyncConfig(config) {
+  localStorage.setItem(SCH_SYNC_CONFIG_KEY, JSON.stringify(config));
+  _schClient = null;
+}
+
+function isSchSyncConfigured() {
+  const c = getSchSyncConfig();
+  return !!(c.url && c.key && c.syncKey);
+}
+
+function ensureSchClient() {
+  if (_schClient) return _schClient;
+  const c = getSchSyncConfig();
+  if (!c.url || !c.key || !window.supabase) return null;
+  try {
+    _schClient = window.supabase.createClient(c.url, c.key);
+    return _schClient;
+  } catch (e) { _schClient = null; return null; }
+}
+
+function schSyncRowKey() {
+  const c = getSchSyncConfig();
+  return c.syncKey ? (c.syncKey + '__schedule') : '';
+}
+
+function updateSchSyncBadge() {
+  const badge = document.getElementById('schSyncStatusBadge');
+  if (!badge) return;
+  if (isSchSyncConfigured()) {
+    badge.textContent = '已配置';
+    badge.className = 'settings-value connected';
+  } else {
+    badge.textContent = '未配置';
+    badge.className = 'settings-value';
+  }
+}
+
+function openSchSyncModal() {
+  const c = getSchSyncConfig();
+  document.getElementById('schSupabaseUrl').value = c.url || '';
+  document.getElementById('schSupabaseKey').value = c.key || '';
+  document.getElementById('schSyncKey').value = c.syncKey || '';
+  updateSchSyncBadge();
+  document.getElementById('schSyncModal').classList.add('active');
+}
+
+function closeSchSyncModal() {
+  document.getElementById('schSyncModal').classList.remove('active');
+}
+
+function saveSchSyncConfigUI() {
+  const url = document.getElementById('schSupabaseUrl').value.trim();
+  const key = document.getElementById('schSupabaseKey').value.trim();
+  const syncKey = document.getElementById('schSyncKey').value.trim();
+  if (!url || !key || !syncKey) { showToast('请填写完整的配置信息'); return; }
+  const urlErr = validateSyncUrl(url);
+  if (urlErr) { showToast(urlErr); return; }
+  setSchSyncConfig({ url: url.replace(/\/+$/, ''), key, syncKey });
+  updateSchSyncBadge();
+  if (!window.supabase) { showToast('Supabase 库未加载，请刷新页面后重试'); return; }
+  showToast('正在测试连接…');
+  testSupabaseConnectionWith(getSchSyncConfig()).then(({ ok, msg }) => {
+    if (ok) { showToast('课表同步配置成功，连接正常 ✅'); closeSchSyncModal(); }
+    else showToast('配置已保存，但连接失败：' + msg, 'error');
+  });
+}
+
+// 用指定配置测试连通（课表独立配置可能与资产不同）
+function testSupabaseConnectionWith(config) {
+  if (!config.url || !config.key) return Promise.resolve({ ok: false, msg: 'URL 或 Key 未填写' });
+  let u;
+  try { u = new URL(config.url); } catch (e) { return Promise.resolve({ ok: false, msg: 'URL 格式错误' }); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return Promise.resolve({ ok: false, msg: 'URL 必须以 http(s):// 开头' });
+  if (!window.supabase) return Promise.resolve({ ok: false, msg: 'Supabase 库未加载，请刷新页面后重试' });
+  try {
+    const client = window.supabase.createClient(config.url, config.key);
+    return client.from('sync_data').select('sync_key').limit(1).then(({ error }) => {
+      if (error) {
+        const code = String(error.code || '');
+        if (code === '42P01' || code === 'PGRST205' || /42p01|pgrst205/i.test(String(error.message))) {
+          return { ok: false, msg: '数据库缺少 sync_data 表，请先在 Supabase SQL Editor 中创建' };
+        }
+        if (String(error.message).match(/401|403|invalid api key|jwt|apikey/i)) {
+          return { ok: false, msg: 'API Key 无效或已失效，请重新复制 Anon Key' };
+        }
+      }
+      return { ok: true, msg: '连接正常' };
+    }).catch(e => ({ ok: false, msg: describeSyncError(e) }));
+  } catch (e) {
+    return Promise.resolve({ ok: false, msg: describeSyncError(e) });
+  }
+}
+
+async function schSyncPush() {
+  if (!isSchSyncConfigured()) { showToast('请先配置课表同步'); return; }
+  const client = ensureSchClient();
+  if (!client) { showToast('Supabase 初始化失败，请刷新页面后重试', 'error'); return; }
+  if (typeof Schedule === 'undefined' || !Schedule.getTemplateData) { showToast('课表模块未就绪', 'error'); return; }
+  showToast('正在上传课表模板…');
+  try {
+    const { error } = await client.from('sync_data').upsert({
+      sync_key: schSyncRowKey(),
+      data: { template: Schedule.getTemplateData() },
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'sync_key' });
+    if (error) throw error;
+    showToast('课表模板已上传到云端 ✅');
+  } catch (e) { showToast('上传失败：' + describeSyncError(e), 'error'); }
+}
+
+async function schSyncPull() {
+  if (!isSchSyncConfigured()) { showToast('请先配置课表同步'); return; }
+  const client = ensureSchClient();
+  if (!client) { showToast('Supabase 初始化失败，请刷新页面后重试', 'error'); return; }
+  if (typeof Schedule === 'undefined' || !Schedule.importTemplateData) { showToast('课表模块未就绪', 'error'); return; }
+  showToast('正在下载课表模板…');
+  try {
+    const { data, error } = await client.from('sync_data').select('data, updated_at').eq('sync_key', schSyncRowKey()).single();
+    if (error && error.code !== 'PGRST116') throw error;
+    if (!data || !data.data || !Schedule.importTemplateData(data.data.template)) { showToast('云端暂无课表数据'); return; }
+    updateSchSyncBadge();
+    showToast('课表模板已下载 ✅');
+  } catch (e) { showToast('下载失败：' + describeSyncError(e), 'error'); }
+}
+
+async function schSyncForcePull() {
+  if (!isSchSyncConfigured()) { showToast('请先配置课表同步'); return; }
+  const client = ensureSchClient();
+  if (!client) { showToast('Supabase 初始化失败，请刷新页面后重试', 'error'); return; }
+  if (typeof Schedule === 'undefined') { showToast('课表模块未就绪', 'error'); return; }
+  const ok = await showConfirmModal('以云端课表为准', '将用云端模板覆盖本地模板，并清空所有周实例（本周/下周等临时调整会重新按云端模板生成）。\n\n本地未同步的课表修改将丢失，确定继续？');
+  if (!ok) return;
+  showToast('正在从云端恢复课表…');
+  try {
+    const { data, error } = await client.from('sync_data').select('data').eq('sync_key', schSyncRowKey()).single();
+    if (error && error.code !== 'PGRST116') throw error;
+    if (!data || !data.data || !data.data.template) { showToast('云端暂无课表数据'); return; }
+    if (!Schedule.importTemplateData(data.data.template)) { showToast('云端课表数据格式无效', 'error'); return; }
+    if (Schedule.clearWeekInstances) Schedule.clearWeekInstances(); // 清空周实例 → 重新按云端模板懒生成
+    showToast('已从云端完全恢复课表 ✅');
+  } catch (e) { showToast('同步失败：' + describeSyncError(e), 'error'); }
 }
 
 // ==================== 弹窗遮罩关闭 ====================

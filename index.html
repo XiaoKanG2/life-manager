@@ -219,6 +219,12 @@
                     <span class="settings-value" id="syncStatusBadge">未配置</span>
                     <span class="settings-arrow">></span>
                 </div>
+                <div class="settings-item" onclick="openSchSyncModal()">
+                    <span class="settings-icon">📅</span>
+                    <span class="settings-label">课表同步</span>
+                    <span class="settings-value" id="schSyncStatusBadge">未配置</span>
+                    <span class="settings-arrow">></span>
+                </div>
                 <div class="settings-item" onclick="UI.openSettings()">
                     <span class="settings-icon">🎂</span>
                     <span class="settings-label">生日设置</span>
@@ -449,6 +455,39 @@
                         <button class="sync-btn sync-btn-danger" onclick="syncForcePull()">🔄 以云端为准（覆盖本地）</button>
                     </div>
                     <p class="modal-hint">配置后，两台手机即可自动同步数据</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 课表同步弹窗（独立 key） ========== -->
+        <div class="modal-overlay" id="schSyncModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="closeSchSyncModal()">✕</span>
+                    <span class="modal-title">课表同步设置</span>
+                    <span class="modal-save" onclick="saveSchSyncConfigUI()">保存</span>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <label class="form-label">Supabase URL</label>
+                        <input type="text" class="note-input" id="schSupabaseUrl" placeholder="https://xxxxx.supabase.co" autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">Anon Key</label>
+                        <input type="text" class="note-input" id="schSupabaseKey" placeholder="eyJhbGciOi..." autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">课表同步密钥（独立于资产同步，两台手机填相同密钥）</label>
+                        <input type="text" class="note-input" id="schSyncKey" placeholder="例如：schedule2024" maxlength="50" autocomplete="off">
+                    </div>
+                    <p class="modal-hint">URL 与 Anon Key 默认自动沿用「云端同步」的配置，只需为课表单独设置一个同步密钥。课表模板会存在云端独立的一行，与资产 / 生日数据互不影响。</p>
+                    <div class="sync-actions">
+                        <button class="sync-btn" onclick="schSyncPush()">☁️ 上传课表到云端</button>
+                        <button class="sync-btn" onclick="schSyncPull()">📥 从云端下载课表</button>
+                    </div>
+                    <div class="sync-actions">
+                        <button class="sync-btn sync-btn-danger" onclick="schSyncForcePull()">🔄 以云端为准（重置本周/下周）</button>
+                    </div>
                 </div>
             </div>
         </div>

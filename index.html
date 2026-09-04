@@ -328,12 +328,30 @@
                         <label class="form-label">微信推送（锁屏也能收）</label>
                         <div class="sch-remind-perm" id="schCloudStatus">正在查询云端状态…</div>
                         <div class="sch-remind-hint" style="margin-top:4px">
-                            提醒计划会自动同步到云端，到点由云端推送到微信（鸿蒙/安卓/iOS 均适用），
-                            即使 App 关闭也能收到。
+                            提醒计划自动同步到云端，到点由云端推送到微信——即使 App 关闭 / 锁屏也能收到（鸿蒙 / 安卓 / iOS 均适用）。
+                        </div>
+                        <div class="form-row" style="margin-top:8px">
+                            <label class="form-label">推送通道</label>
+                            <select class="note-input" id="schWxProvider" onchange="Schedule.loadWxCfgIntoUI()">
+                                <option value="sct">Server酱（sct.ftqq.com）</option>
+                                <option value="pushplus">PushPlus（pushplus.plus）</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <label class="form-label">SendKey / Token</label>
+                            <input type="text" class="note-input" id="schWxKey" placeholder="粘贴注册后复制的发送密钥" autocomplete="off">
+                            <div class="sch-remind-hint" style="margin-top:4px">
+                                获取方式：打开上方对应通道官网 → 微信扫码登录 → 复制发送密钥粘贴到此处。<br>
+                                Key 仅保存在本机，随提醒计划上报云端用于推送，不写入代码。
+                            </div>
                         </div>
                         <div class="sync-actions" style="margin-top:8px">
-                            <button class="sync-btn" onclick="Schedule.cloudManualSync()">同步云端计划</button>
-                            <button class="sync-btn" onclick="Schedule.sendCloudTest()">发送微信测试</button>
+                            <button class="sync-btn" onclick="Schedule.saveWxConfig()">保存 Key</button>
+                            <button class="sync-btn" onclick="Schedule.cloudManualSync()">同步计划</button>
+                            <button class="sync-btn" onclick="Schedule.sendCloudTest()">发送测试</button>
+                        </div>
+                        <div class="sync-actions" style="margin-top:8px">
+                            <button class="sync-btn sync-btn-danger" onclick="Schedule.clearWxConfig()">清除已保存的 Key</button>
                         </div>
                     </div>
                     <div class="sch-remind-note">

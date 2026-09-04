@@ -6,9 +6,10 @@
 //   4. GET  /api/remind/status 查询云端配置/计划数/最近提醒时刻
 //   5. 每 20s tick：到点提醒 → 调微信推送通道（Server酱 / PushPlus）
 //
-// 推送配置：同目录 config.json（不入 git，敏感）：
-//   { "provider": "sct" | "pushplus", "key": "<SendKey / token>" }
-//   未配置或缺失时默认 mock 模式（只打日志不发微信），/status 的 configured=false。
+// 推送配置优先级：
+//   1. 设备上报 wx（schedule.js 界面填写，localStorage 持久，随 sync/test 请求携带，快照进该设备计划）
+//   2. 同目录 config.json（不入 git，敏感）：{ "provider": "sct" | "pushplus", "key": "<SendKey / token>" }
+//   均未配置时默认 mock 模式（只打日志不发微信），/status 的 configured=false。
 //
 // 计划持久化：data/plans.json（尽力而为；容器重启后若文件系统保留则继续生效）
 
@@ -51,15 +52,16 @@ function persistPlans() {
 const store = loadPlans();
 if (!store.devices) store.devices = {};
 
-// 设备上报：全量替换该设备未来计划
-function applySync(deviceId, plans) {
+// 设备上报：全量替换该设备未来计划；wx 为设备级推送通道（界面填写），快照进每条计划
+function applySync(deviceId, plans, wx) {
   const now = Date.now();
   const valid = (Array.isArray(plans) ? plans : [])
     .filter(p => p && typeof p.ts === 'number' && p.ts > now - FIRE_WINDOW_MS)
     .map(p => ({
       ts: Math.floor(p.ts),
       title: String(p.title || '上课提醒').slice(0, 40),
-      body: String(p.body || '').slice(0, 160)
+      body: String(p.body || '').slice(0, 160),
+      wx: (wx && wx.provider === 'sct' || wx && wx.provider === 'pushplus') && wx.key ? { provider: wx.provider, key: String(wx.key).slice(0, 200) } : null
     }))
     .sort((a, b) => a.ts - b.ts);
   store.devices[deviceId] = valid;
@@ -108,9 +110,10 @@ function httpsJson(method, host, apiPath, headers, body) {
 }
 
 async function firePush(p) {
-  const cfg = loadConfig();
   const ts = new Date().toISOString();
   console.log(ts, 'FIRE', p.title, '|', p.body);
+  // 优先设备级 key（界面填写随计划上报），无则回退 config.json
+  const cfg = (p.wx && isConfigured(p.wx)) ? p.wx : loadConfig();
   if (!isConfigured(cfg)) return { ok: false, reason: 'not_configured' };
   try {
     const note = p.body + '\n—— 生活管家';
@@ -216,9 +219,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/api/remind/test' && req.method === 'POST') {
     const body = await readBody(req);
-    const cfg = loadConfig();
-    if (!isConfigured(cfg)) { json(res, 200, { ok: false, error: '云端未配置推送密钥，请在 config.json 中配置' }); return; }
-    const r = await firePush({ ts: Date.now(), title: body.title || '测试', body: body.body || '云端推送测试' });
+    // 设备界面填写 key 优先，回退 config.json
+    const cfg = (body.wx && isConfigured(body.wx)) ? body.wx : loadConfig();
+    if (!isConfigured(cfg)) { json(res, 200, { ok: false, error: '未配置推送 Key：请在课表「⏰ 提醒 → 微信推送」中填写并保存' }); return; }
+    const r = await firePush({ ts: Date.now(), title: body.title || '测试', body: body.body || '云端推送测试', wx: body.wx && isConfigured(body.wx) ? body.wx : null });
     json(res, 200, { ok: r.ok, error: r.ok ? undefined : (r.reason || 'send failed') });
     return;
   }
@@ -226,7 +230,7 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const did = body.deviceId;
     if (!did) { json(res, 400, { ok: false, error: 'missing deviceId' }); return; }
-    const plans = applySync(did, body.plans);
+    const plans = applySync(did, body.plans, body.wx);
     json(res, 200, { ok: true, plans: plans.length, nextFireAt: nextFireAt() });
     return;
   }

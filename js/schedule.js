@@ -737,59 +737,107 @@ const Schedule = (function () {
     cloudQueueSoon(); // 提醒设置变化 → 重新同步云端
   }
 
-  // ===== 微信推送通道配置（界面填写，同云端同步逻辑：本地存储 + 上报云端） =====
-  // 仅支持 PushPlus 单通道。语义：token=发送者本人（PushPlus 用户令牌）；
-  // friends=好友令牌列表（发送时拼 to 参数同时转发给好友，pushplus 限制 ≤10 个/请求）；
-  // toSelf=是否额外给自己发一条（PushPlus 带 to 只发给好友，故分开请求）。
+  // ===== 推送通道配置（界面填写，同云端同步逻辑：本地存储 + 上报云端） =====
+  // 可选通道均由 PushPlus 承载（同一 PushPlus Token）：
+  //   channel='wechat'（默认）：微信服务号。key=发送者本人 Token；
+  //       friends=好友令牌（拼 to 转发，≤10 个）；toSelf=是否额外给自己发一条（PushPlus 带 to 只发好友，故分开请求）
+  //   channel='qq'：QQ 机器人。key=同一个 PushPlus Token（个人中心「渠道配置 → QQ机器人」扫码绑定）；
+  //       option=群配置编码（机器人拉进目标群后在渠道配置里新增群配置生成；留空 = 只发到自己 QQ）
+  // 存储结构 { channel, key, toSelf, friends, qqOption }；
+  // 老数据无 channel/qqOption 字段 → 自动视为 wechat，完全向后兼容。
   const MAX_FRIENDS = 10;
+
+  // 圈号/数字机房间 → 「机房X」文案（①~⑤、1~5、一二三四五），已是机房/号形式或自定义长文本则原样
+  function roomDisplay(room) {
+    if (!room) return '';
+    const r = String(room).trim();
+    if (/^(机房|.*号)/.test(r)) return r;
+    if (/^[①-⑤]$/.test(r) || /^[1-5]$/.test(r) || /^[一二三四五]$/.test(r)) return '机房' + r;
+    return r;
+  }
+
+  function normFriends(list) {
+    const seen = {};
+    const out = [];
+    (Array.isArray(list) ? list : []).forEach(function (f) {
+      if (!f || typeof f.token !== 'string') return;
+      const token = f.token.trim();
+      if (!token || seen[token] || out.length >= MAX_FRIENDS) return;
+      seen[token] = 1;
+      out.push({ name: String(f.name || '').trim().slice(0, 20), token: token.slice(0, 200) });
+    });
+    return out;
+  }
 
   function getWxCfg() {
     const c = loadJSON(WX_KEY, null) || {};
-    const raw = Array.isArray(c.friends) ? c.friends : [];
-    const seen = {};
-    const friends = [];
-    raw.forEach(function (f) {
-      if (!f || typeof f.token !== 'string') return;
-      const token = f.token.trim();
-      if (!token || seen[token] || friends.length >= MAX_FRIENDS) return;
-      seen[token] = 1;
-      friends.push({ name: String(f.name || '').trim().slice(0, 20), token: token.slice(0, 200) });
-    });
     return {
-      provider: 'pushplus',
+      channel: (c.channel === 'qq') ? 'qq' : 'wechat',
       key: (typeof c.key === 'string') ? c.key : '',
       toSelf: c.toSelf !== false,
-      friends: friends
+      friends: normFriends(c.friends),
+      qqOption: (typeof c.qqOption === 'string') ? c.qqOption.trim().slice(0, 50) : ''
     };
   }
 
-  function saveWxCfg(key, toSelf, friends) {
-    const seen = {};
-    const list = (Array.isArray(friends) ? friends : []).reduce(function (acc, f) {
-      if (!f || typeof f.token !== 'string') return acc;
-      const token = f.token.trim();
-      if (!token || seen[token] || acc.length >= MAX_FRIENDS) return acc;
-      seen[token] = 1;
-      acc.push({ name: String(f.name || '').trim().slice(0, 20), token: token.slice(0, 200) });
-      return acc;
-    }, []);
-    localStorage.setItem(WX_KEY, JSON.stringify({
-      provider: 'pushplus',
-      key: String(key || '').trim(),
-      toSelf: toSelf !== false,
-      friends: list
-    }));
+  // 保存当前 UI 表单的整份配置（channel 决定云端发送渠道；两通道字段都保留可随时切换）
+  function saveWxConfig() {
+    const chEl = document.getElementById('schChannel');
+    const channel = (chEl && chEl.value === 'qq') ? 'qq' : 'wechat';
+    const prev = getWxCfg();
+    const kInput = document.getElementById('schWxKey'); // Token 两渠道共用（必填）
+    if (!kInput) return;
+    const key = kInput.value.trim();
+    if (!key) { showToast('请先粘贴 PushPlus Token'); return; }
+    if (channel === 'qq') {
+      const qo = document.getElementById('schQqOption');
+      const option = (qo ? qo.value.trim() : '').slice(0, 50);
+      writeWxCfg({ channel: 'qq', key: key, toSelf: prev.toSelf, friends: prev.friends, qqOption: option });
+      showToast(option ? 'QQ 群推送配置已保存并同步云端' : 'QQ 推送配置已保存（发到绑定 QQ）');
+    } else {
+      const selfEl = document.getElementById('schWxSelf');
+      const toSelf = !selfEl || selfEl.classList.contains('on');
+      const friends = collectFriendRows();
+      writeWxCfg({ channel: 'wechat', key: key, toSelf: toSelf, friends: friends, qqOption: prev.qqOption });
+      showToast('微信推送配置已保存并同步云端' + (friends.length ? '（' + friends.length + ' 位好友）' : ''));
+    }
+    cloudStatusRefresh();
+  }
+
+  // 落盘（统一入口：变更即触发云端计划重同步）
+  function writeWxCfg(cfg) {
+    localStorage.setItem(WX_KEY, JSON.stringify(cfg));
     cloudQueueSoon(); // 通道变化 → 带新配置重新同步云端计划
   }
 
-  // 打开提醒弹窗时把已保存的配置回显到表单（通道固定 PushPlus）
+  // 打开提醒弹窗时把已保存的配置回显到表单（渠道 + 两区字段）
   function loadWxCfgIntoUI() {
     const cfg = getWxCfg();
+    const chEl = document.getElementById('schChannel');
+    if (chEl) {
+      chEl.value = cfg.channel;
+      toggleChannelBlock(cfg.channel);
+    }
     const kInput = document.getElementById('schWxKey');
     if (kInput) kInput.value = cfg.key;
     const selfEl = document.getElementById('schWxSelf');
     if (selfEl) selfEl.classList.toggle('on', cfg.toSelf);
     renderFriendRows(cfg.friends);
+    const qo = document.getElementById('schQqOption');
+    if (qo) qo.value = cfg.qqOption;
+  }
+
+  // 渠道下拉切换：仅切换可见配置区，不做持久化（点保存才落盘）
+  function onChannelChange(el) {
+    const v = (el && el.value === 'qq') ? 'qq' : 'wechat';
+    toggleChannelBlock(v);
+  }
+
+  function toggleChannelBlock(channel) {
+    const wb = document.getElementById('schWxBlock');
+    const qb = document.getElementById('schQqBlock');
+    if (wb) wb.style.display = (channel === 'wechat') ? '' : 'none';
+    if (qb) qb.style.display = (channel === 'qq') ? '' : 'none';
   }
 
   // 好友令牌输入行（无数据绑定：保存时按行收集；追加/删除只操作 DOM）
@@ -859,28 +907,19 @@ const Schedule = (function () {
     return list;
   }
 
-  // 读取界面表单保存：key=发送者本人令牌（必填）；toSelf/好友列表一并持久化
-  function saveWxConfig() {
-    const kInput = document.getElementById('schWxKey');
-    if (!kInput) return;
-    const key = kInput.value.trim();
-    if (!key) { showToast('请先粘贴 PushPlus Token'); return; }
-    const selfEl = document.getElementById('schWxSelf');
-    const toSelf = !selfEl || selfEl.classList.contains('on');
-    const friends = collectFriendRows();
-    saveWxCfg(key, toSelf, friends);
-    showToast('微信推送配置已保存并同步云端' + (friends.length ? '（' + friends.length + ' 位好友）' : ''));
-    cloudStatusRefresh();
-  }
-
-  // 清除本地保存的配置
+  // 清除本地保存的配置（渠道回微信默认、表单复位）
   function clearWxConfig() {
     localStorage.removeItem(WX_KEY);
+    const chEl = document.getElementById('schChannel');
+    if (chEl) chEl.value = 'wechat';
+    toggleChannelBlock('wechat');
     const kInput = document.getElementById('schWxKey');
     if (kInput) kInput.value = '';
     const selfEl = document.getElementById('schWxSelf');
     if (selfEl) selfEl.classList.add('on');
     renderFriendRows([]);
+    const qo = document.getElementById('schQqOption');
+    if (qo) qo.value = '';
     showToast('已清除推送配置');
     cloudStatusRefresh();
   }
@@ -1014,7 +1053,7 @@ const Schedule = (function () {
     t.textContent = upcoming ? (mins > 0 ? ('⏰ ' + mins + ' 分钟后上课') : '⏰ 马上上课') : ('已上课 ' + mins + ' 分钟');
     const d = document.createElement('div');
     d.className = 'remind-banner-course';
-    d.textContent = (course.name || '') + (course.cls ? ' · ' + course.cls : '') + (course.room ? ' ' + course.room : '') + ' · ' + slotLabelOf(slot);
+    d.textContent = (course.name || '') + (course.cls ? ' · ' + course.cls : '') + (roomDisplay(course.room) ? ' · ' + roomDisplay(course.room) : '') + ' · ' + slotLabelOf(slot);
     banner.appendChild(t);
     banner.appendChild(d);
     banner.addEventListener('click', removeRemindBanner);
@@ -1229,10 +1268,17 @@ const Schedule = (function () {
         if (startMin === null || lead === null) continue;
         const startMs = new Date(dateStr + 'T00:00:00').getTime() + startMin * 60000;
         const leadText = lead >= 60 ? (Math.floor(lead / 60) + ' 小时' + (lead % 60 ? ' ' + (lead % 60) + ' 分钟' : '')) : (lead + ' 分钟');
+        const dm = dateStr.split('-');
+        const dateText = parseInt(dm[1], 10) + '月' + parseInt(dm[2], 10) + '日';
+        const periodText = PERIODS[p - 1].label + '（' + PERIODS[p - 1].time.split('~')[0] + ' 上课）';
+        const room = roomDisplay(course.room);
         plans.push({
           ts: startMs - lead * 60000,
           title: '⏰ 还有 ' + leadText + ' 上课',
-          body: course.name + (course.cls ? ' · ' + course.cls : '') + (course.room ? ' ' + course.room : '') + ' · ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + '（' + PERIODS[p - 1].time.split('~')[0] + ' 上课）'
+          body: course.name
+            + (course.cls ? ' · ' + course.cls : '')
+            + (room ? ' · ' + room : '')
+            + ' · ' + dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + periodText
         });
       }
     }
@@ -1369,6 +1415,7 @@ const Schedule = (function () {
     toggleWxSelf: toggleWxSelf,
     addFriendRow: addFriendRow,
     removeFriendRow: removeFriendRow,
+    onChannelChange: onChannelChange,
     // 课表云同步（独立 key）
     getTemplateData: getTemplateData,
     importTemplateData: importTemplateData,

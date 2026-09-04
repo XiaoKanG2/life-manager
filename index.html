@@ -323,41 +323,57 @@
                         <div class="sch-remind-hint">未单独设置的课，统一按此时间提前提醒</div>
                     </div>
                     <div class="form-row">
-                        <label class="form-label">微信推送（锁屏也能收）</label>
+                        <label class="form-label">推送通知（锁屏也能收）</label>
                         <div class="sch-remind-perm" id="schCloudStatus">正在查询云端状态…</div>
                         <div class="sch-remind-hint" style="margin-top:4px">
-                            提醒计划自动同步到云端，到点由云端推送到微信——即使 App 关闭 / 锁屏也能收到（鸿蒙 / 安卓 / iOS 均适用）。
+                            提醒计划自动同步到云端，到点由云端推送——即使 App 关闭 / 锁屏也能收到（鸿蒙 / 安卓 / iOS 均适用）。
                         </div>
                         <div class="form-row">
                             <label class="form-label">推送通道</label>
-                            <div class="sch-remind-desc">PushPlus（pushplus.plus）· 微信扫码登录后复制 Token 粘贴下方</div>
+                            <select class="note-input" id="schChannel" onchange="Schedule.onChannelChange(this)">
+                                <option value="wechat">PushPlus 微信（服务号）</option>
+                                <option value="qq">PushPlus QQ（机器人）</option>
+                            </select>
                         </div>
                         <div class="form-row">
-                            <label class="form-label">PushPlus Token（发送者本人）</label>
+                            <label class="form-label">PushPlus Token（发送者本人，微信/QQ 共用）</label>
                             <input type="text" class="note-input" id="schWxKey" placeholder="粘贴自己的 Token（pushplus.plus 一对一推送中复制）" autocomplete="off">
                             <div class="sch-remind-hint" style="margin-top:4px">
                                 获取方式：打开 pushplus.plus → 微信扫码登录 → 一对一推送 → 复制 Token 粘贴到此处。<br>
-                                Token 代表「由谁发送」：不配置好友令牌时，提醒只发到 Token 本人微信。Token 仅保存在本机并随提醒计划上报云端，不写入代码。
+                                Token 代表「由谁发送」：微信通道发到 Token 本人微信；QQ 通道发到绑定机器人本人的 QQ。仅保存在本机并随提醒计划上报云端，不写入代码。
                             </div>
                         </div>
-                        <div class="form-row">
-                            <div class="sch-remind-switch-row">
-                                <div>
-                                    <div class="sch-remind-label">同时发送给自己</div>
-                                    <div class="sch-remind-desc">关闭后提醒只发给下方配置的好友令牌</div>
+                        <div id="schWxBlock">
+                            <div class="form-row">
+                                <div class="sch-remind-switch-row">
+                                    <div>
+                                        <div class="sch-remind-label">同时发送给自己</div>
+                                        <div class="sch-remind-desc">关闭后提醒只发给下方配置的好友令牌</div>
+                                    </div>
+                                    <span class="tab-toggle" id="schWxSelf" onclick="Schedule.toggleWxSelf()">
+                                        <span class="tab-toggle-knob"></span>
+                                    </span>
                                 </div>
-                                <span class="tab-toggle" id="schWxSelf" onclick="Schedule.toggleWxSelf()">
-                                    <span class="tab-toggle-knob"></span>
-                                </span>
+                            </div>
+                            <div class="form-row">
+                                <label class="form-label">好友令牌（同时发送给好友）</label>
+                                <div class="sch-remind-hint" style="margin-top:2px">
+                                    给家人/其他微信也发提醒：让对方用微信扫你的 pushplus 二维码添加好友（加好友是双向的），再在 pushplus「好友列表」复制对方的<strong>好友令牌</strong>粘贴到下方（最多 10 个）。
+                                </div>
+                                <div id="schWxFriendList" style="margin-top:8px"></div>
+                                <button class="sync-btn" onclick="Schedule.addFriendRow()" style="margin-top:6px">＋ 添加好友</button>
                             </div>
                         </div>
-                        <div class="form-row">
-                            <label class="form-label">好友令牌（同时发送给好友）</label>
-                            <div class="sch-remind-hint" style="margin-top:2px">
-                                给家人/其他微信也发提醒：让对方用微信扫你的 pushplus 二维码添加好友（加好友是双向的），再在 pushplus「好友列表」复制对方的<strong>好友令牌</strong>粘贴到下方（最多 10 个）。
+                        <div id="schQqBlock" style="display:none">
+                            <div class="form-row">
+                                <label class="form-label">QQ 群配置编码（选填）</label>
+                                <input type="text" class="note-input" id="schQqOption" placeholder="留空 = 只发到绑定机器人的 QQ" autocomplete="off">
+                                <div class="sch-remind-hint" style="margin-top:4px">
+                                    发到自己 QQ：此项留空即可。<br>
+                                    发到 QQ 群：先在 pushplus 个人中心 → 渠道配置 →「QQ机器人」→ 用 QQ 扫码把机器人加为好友；再把机器人拉进目标群、在群内允许机器人主动推送；最后在该渠道配置中「新增群配置」，把生成的<strong>配置编码</strong>粘贴到此处。<br>
+                                    <span class="sch-remind-desc">同一 QQ 群只能建一条配置；此方式不支持同时转发微信好友令牌。</span>
+                                </div>
                             </div>
-                            <div id="schWxFriendList" style="margin-top:8px"></div>
-                            <button class="sync-btn" onclick="Schedule.addFriendRow()" style="margin-top:6px">＋ 添加好友</button>
                         </div>
                         <div class="sync-actions" style="margin-top:8px">
                             <button class="sync-btn" onclick="Schedule.saveWxConfig()">保存</button>

@@ -1,5 +1,5 @@
 {
   "provider": "pushplus",
   "key": "",
-  "_comment": "key = 发送者本人 Token（PushPlus 用户令牌，发给自己用）。如需同时推送好友，请在 App「课表 → ⏰ 提醒 → 微信推送」界面填写好友令牌并随计划上报；也可在此处配置 friends（界面配置优先于此文件）。friends: [{ \"name\": \"家人\", \"token\": \"<好友令牌>\" }]，toSelf: false 表示不额外发给自己"
+  "_comment": "服务器级兜底推送配置（界面保存的配置优先于此文件）。provider=pushplus 发微信服务号；provider=qq 走 PushPlus QQ 机器人渠道：key 同为发送者本人的 PushPlus Token，option 填「QQ 群配置编码」（在 pushplus 个人中心→渠道配置→QQ机器人 里新增群配置生成，留空=只发到自己QQ）。好友令牌 friends / 群配置编码建议直接在 App「课表 → ⏰ 提醒 → 推送通知」界面填写并保存，会随计划自动上报云端，无需改动本文件"
 }

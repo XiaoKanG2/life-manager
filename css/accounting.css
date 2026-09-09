@@ -631,6 +631,8 @@ input, button {
     transition: all 0.15s;
 }
 .sync-btn:active { background: var(--primary); color: #fff; }
+.sync-btn-primary { background: var(--primary); color: #fff; border: none; }
+.sync-btn-primary:active { background: var(--primary); opacity: 0.85; color: #fff; }
 .sync-btn-danger { background: #FFF0F0; color: var(--negative); border: 1px solid #FFD0D0; }
 .sync-btn-danger:active { background: var(--negative); color: #fff; }
 

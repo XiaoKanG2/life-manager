@@ -49,10 +49,12 @@ function isConfigured(cfg) {
 function normalizeWx(wx) {
   if (!wx) return { channel: 'wechat', key: '', toSelf: true, friends: [] };
   if (wx.channel === 'qq') {
+    // option 与 qqOption 兼容：设备上报用 qqOption，applySync 快照后为 option（normalizeWx 输出），二次清洗需都能识别
+    const option = String(wx.qqOption || wx.option || '').trim().slice(0, 50);
     return {
       channel: 'qq',
       key: String(wx.key || '').trim().slice(0, 200),
-      option: String(wx.qqOption || '').trim().slice(0, 50)
+      option: option
     };
   }
   const seen = {};
@@ -104,7 +106,7 @@ function applySync(deviceId, plans, wx) {
     .filter(p => p && typeof p.ts === 'number' && p.ts > now - FIRE_WINDOW_MS)
     .map(p => ({
       ts: Math.floor(p.ts),
-      title: String(p.title || '上课提醒').slice(0, 40),
+      title: String(p.title || '上课提醒').slice(0, 60),
       body: String(p.body || '').slice(0, 160),
       wx: (wx && isConfigured(normalizeWx(wx))) ? normalizeWx(wx) : null
     }))
@@ -174,7 +176,7 @@ async function firePush(p) {
   // 设备级配置（界面填写随计划上报）优先，无则回退 config.json；resolvePushCfg 已做清洗
   const cfg = resolvePushCfg(p.wx);
   if (!isConfigured(cfg)) return { ok: false, reason: 'not_configured', results: [] };
-  const note = p.body + '\n—— 生活管家';
+  const plain = String(p.body || '').replace(/\r\n?/g, '\n');
   const results = [];
   let anyOk = false;
 
@@ -182,6 +184,7 @@ async function firePush(p) {
     // —— QQ 机器人渠道：/send + channel=qq；无 option = 发到绑定机器人本人的 QQ，
     //    有 option = 发到对应 QQ 群（pushplus 渠道配置中新增的群配置编码）；
     //    QQ 群方式不支持 topic/to（本实现本就不带），template 用 txt 完整展示正文 ——
+    const note = plain + '\n—— 生活管家';
     const payload = { token: cfg.key, title: p.title, content: note, channel: 'qq', template: 'txt' };
     if (cfg.option) payload.option = cfg.option;
     try {
@@ -200,6 +203,8 @@ async function firePush(p) {
   }
 
   // —— PushPlus 微信渠道：按目标（自己/好友）逐条分发 ——
+  // PushPlus 微信默认 html 模板，content 里 \n 会被折叠 → 显式转 <br> 保留多行结构
+  const note = plain.replace(/\n/g, '<br>') + '<br>—— 生活管家';
   for (const t of pushTargets(cfg)) {
     const payload = { token: cfg.key, title: p.title, content: note };
     if (t.to) payload.to = t.to; // 无 to = 发给自己（PushPlus 语义：token 为发送者本人）
@@ -221,8 +226,8 @@ async function firePush(p) {
 
 // ==================== 调度 ====================
 
-function tick() {
-  const now = Date.now();
+// 扫描并触发所有已到期未发送的计划（发送异步，不阻塞）；返回是否有状态变化（需 persist）
+function processDue(now) {
   let changed = false;
   Object.keys(store.devices).forEach(did => {
     const plans = store.devices[did];
@@ -239,7 +244,11 @@ function tick() {
     });
     store.devices[did] = remain;
   });
-  if (changed) persistPlans();
+  return changed;
+}
+
+function tick() {
+  if (processDue(Date.now())) persistPlans();
 }
 
 // 定时调度仅在直接运行时启用（require 单测模式不启动，见文件底部 main guard）
@@ -325,6 +334,8 @@ const server = http.createServer(async (req, res) => {
     const did = body.deviceId;
     if (!did) { json(res, 400, { ok: false, error: 'missing deviceId' }); return; }
     const plans = applySync(did, body.plans, body.wx);
+    // 刚上报的计划中可能已有到点（如当天首次打开 App 晚于提醒时刻）→ 立即补扫发送，不必等下个 tick
+    if (processDue(Date.now())) persistPlans();
     json(res, 200, { ok: true, plans: plans.length, nextFireAt: nextFireAt() });
     return;
   }
@@ -343,6 +354,7 @@ module.exports = {
   pushTargets: pushTargets,
   applySync: applySync,
   firePush: firePush,
+  processDue: processDue,
   isConfigured: isConfigured,
   loadConfig: loadConfig,
   store: store,

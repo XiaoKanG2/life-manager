@@ -303,7 +303,6 @@
                 <div class="modal-header">
                     <span class="modal-close" onclick="Schedule.closeRemindSettings()">✕</span>
                     <span class="modal-title">上课提醒</span>
-                    <span class="modal-save" onclick="Schedule.saveRemindSettings()">保存</span>
                 </div>
                 <div class="modal-body">
                     <div class="form-row">
@@ -325,9 +324,6 @@
                     <div class="form-row">
                         <label class="form-label">推送通知（锁屏也能收）</label>
                         <div class="sch-remind-perm" id="schCloudStatus">正在查询云端状态…</div>
-                        <div class="sch-remind-hint" style="margin-top:4px">
-                            提醒计划自动同步到云端，到点由云端推送——即使 App 关闭 / 锁屏也能收到（鸿蒙 / 安卓 / iOS 均适用）。
-                        </div>
                         <div class="form-row">
                             <label class="form-label">推送通道</label>
                             <select class="note-input" id="schChannel" onchange="Schedule.onChannelChange(this)">
@@ -375,18 +371,17 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="sync-actions" style="margin-top:8px">
-                            <button class="sync-btn" onclick="Schedule.saveWxConfig()">保存</button>
-                            <button class="sync-btn" onclick="Schedule.cloudManualSync()">同步计划</button>
-                            <button class="sync-btn" onclick="Schedule.sendCloudTest()">发送测试</button>
-                        </div>
-                        <div class="sync-actions" style="margin-top:8px">
-                            <button class="sync-btn sync-btn-danger" onclick="Schedule.clearWxConfig()">清除已保存的配置</button>
-                        </div>
                     </div>
                     <div class="sch-remind-note">
-                        使用 App 期间到点弹提醒（横幅 + 声音 + 震动）；错过的时间点会在下次打开时补报。
-                        开启微信推送后，锁屏或应用被关闭也能收到微信消息提醒。
+                        到点后：网页打开时会弹横幅提醒（声音 + 震动）；同时云端把消息推到微信 / QQ，即使关掉网页、锁屏也能收到。<br>
+                        云端计划在本页「打开时」自动同步一次（涵盖未来 14 天）——请尽量每天打开一次（如早上看一眼），云端计划就保持最新；若当天第一次打开较晚，早上的提醒会补发、可能偏晚。
+                    </div>
+                    <div class="sync-actions" style="margin-top:8px">
+                        <button class="sync-btn sync-btn-primary" onclick="Schedule.saveRemindSettings()">保存设置</button>
+                    </div>
+                    <div class="sync-actions" style="margin-top:8px">
+                        <button class="sync-btn" onclick="Schedule.sendCloudTest()">发送测试消息</button>
+                        <button class="sync-btn sync-btn-danger" onclick="Schedule.clearWxConfig()">清除推送配置</button>
                     </div>
                 </div>
             </div>

@@ -780,28 +780,29 @@ const Schedule = (function () {
     };
   }
 
-  // 保存当前 UI 表单的整份配置（channel 决定云端发送渠道；两通道字段都保留可随时切换）
-  function saveWxConfig() {
+  // 读取弹窗表单当前值（不落盘）：channel 决定收集两渠道哪组字段；Token 为空返回 null
+  function currentWxForm() {
     const chEl = document.getElementById('schChannel');
     const channel = (chEl && chEl.value === 'qq') ? 'qq' : 'wechat';
-    const prev = getWxCfg();
     const kInput = document.getElementById('schWxKey'); // Token 两渠道共用（必填）
-    if (!kInput) return;
+    if (!kInput) return null;
     const key = kInput.value.trim();
-    if (!key) { showToast('请先粘贴 PushPlus Token'); return; }
+    if (!key) return null;
+    const prev = getWxCfg();
     if (channel === 'qq') {
       const qo = document.getElementById('schQqOption');
-      const option = (qo ? qo.value.trim() : '').slice(0, 50);
-      writeWxCfg({ channel: 'qq', key: key, toSelf: prev.toSelf, friends: prev.friends, qqOption: option });
-      showToast(option ? 'QQ 群推送配置已保存并同步云端' : 'QQ 推送配置已保存（发到绑定 QQ）');
-    } else {
-      const selfEl = document.getElementById('schWxSelf');
-      const toSelf = !selfEl || selfEl.classList.contains('on');
-      const friends = collectFriendRows();
-      writeWxCfg({ channel: 'wechat', key: key, toSelf: toSelf, friends: friends, qqOption: prev.qqOption });
-      showToast('微信推送配置已保存并同步云端' + (friends.length ? '（' + friends.length + ' 位好友）' : ''));
+      return { channel: 'qq', key: key, toSelf: prev.toSelf, friends: prev.friends, qqOption: (qo ? qo.value.trim() : '').slice(0, 50) };
     }
-    cloudStatusRefresh();
+    const selfEl = document.getElementById('schWxSelf');
+    return { channel: 'wechat', key: key, toSelf: !selfEl || selfEl.classList.contains('on'), friends: collectFriendRows(), qqOption: prev.qqOption };
+  }
+
+  // 保存：校验必填后落盘并触发云端计划重同步；成功返回 true，失败提示并返回 false（由调用方决定是否继续）
+  function saveWxConfigFromForm() {
+    const cfg = currentWxForm();
+    if (!cfg) { showToast('请先粘贴 PushPlus Token'); return false; }
+    writeWxCfg(cfg);
+    return true;
   }
 
   // 落盘（统一入口：变更即触发云端计划重同步）
@@ -921,6 +922,8 @@ const Schedule = (function () {
     const qo = document.getElementById('schQqOption');
     if (qo) qo.value = '';
     showToast('已清除推送配置');
+    if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = null; }
+    syncCloudPlan(true); // 同步空推送目标：云端提醒仍在，只是不再外发
     cloudStatusRefresh();
   }
 
@@ -1170,16 +1173,24 @@ const Schedule = (function () {
     cloudStatusRefresh();
   }
 
+  // 弹窗内唯一「保存设置」：统一提交 提醒规则 + 推送通道，并立即把未来 14 天计划同步云端
   function saveRemindSettings() {
+    // 1) 提醒规则（总开关 + 默认提前时间）；saveRemindCfg 内含云计划重同步（3s 防抖）
     const on = document.getElementById('schRemindOn');
     const leadSel = document.getElementById('schRemindLead');
     const cfg = getRemindCfg();
     if (on) cfg.enabled = on.classList.contains('on');
     if (leadSel) cfg.defaultLead = parseInt(leadSel.value, 10) || 0;
     saveRemindCfg(cfg);
-    showToast('提醒设置已保存');
+    // 2) 推送通道（Token 必填校验失败则停留当前页继续编辑）
+    if (!saveWxConfigFromForm()) return;
+    // 3) 立即上报一次（不等 3s 防抖），云端马上按新设置执行
+    if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = null; }
+    syncCloudPlan(true);
+    showToast('已保存并同步云端提醒计划');
     closeRemindSettings();
     runReminderCheck();
+    setTimeout(cloudStatusRefresh, 1000);
   }
 
   function closeRemindSettings() {
@@ -1268,17 +1279,19 @@ const Schedule = (function () {
         if (startMin === null || lead === null) continue;
         const startMs = new Date(dateStr + 'T00:00:00').getTime() + startMin * 60000;
         const leadText = lead >= 60 ? (Math.floor(lead / 60) + ' 小时' + (lead % 60 ? ' ' + (lead % 60) + ' 分钟' : '')) : (lead + ' 分钟');
+        const leadShort = lead >= 60 ? ((Math.floor(lead / 60) + '小时' + (lead % 60 ? (lead % 60) + '分' : '')) + '后') : (lead + '分后');
         const dm = dateStr.split('-');
         const dateText = parseInt(dm[1], 10) + '月' + parseInt(dm[2], 10) + '日';
-        const periodText = PERIODS[p - 1].label + '（' + PERIODS[p - 1].time.split('~')[0] + ' 上课）';
+        const hmStart = PERIODS[p - 1].time.split('~')[0];
         const room = roomDisplay(course.room);
+        // 课程名不参与推送文案：课表通常整学期单一课程，标题保留 时间/班级/机房 即可
+        const whoText = [course.cls, room].filter(Boolean).join(' · '); // 班级 · 机房
         plans.push({
           ts: startMs - lead * 60000,
-          title: '⏰ 还有 ' + leadText + ' 上课',
-          body: course.name
-            + (course.cls ? ' · ' + course.cls : '')
-            + (room ? ' · ' + room : '')
-            + ' · ' + dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + periodText
+          // 标题 = 关键信息一行（何时 + 哪个班/哪个机房），锁屏通知一眼可见
+          title: '⏰ ' + leadShort + ' ' + dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + hmStart + ' ' + whoText,
+          // 正文两行：第 1 行 = 何时（日期 星期 节次 上课时刻 + 提前量）；第 2 行 = 班级 · 机房（完整详情）
+          body: dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + ' ' + hmStart + ' 上课（提前 ' + leadText + '）\n' + whoText
         });
       }
     }
@@ -1343,23 +1356,24 @@ const Schedule = (function () {
   function sendCloudTest() {
     const base = cloudApiBase();
     if (!base) { showToast('非在线环境，无法发送'); return; }
-    if (!getWxCfg().key) { showToast('请先填写并保存推送 Key'); return; }
-    showToast('已发送微信测试，请查看手机微信…');
+    const form = currentWxForm(); // 用弹窗表单当前值（不必先保存即可验证新填的 Token）
+    if (!form) { showToast('请先填写 PushPlus Token（发送测试前需先点「保存设置」也可）'); return; }
+    showToast('已发送测试，请查看手机微信 / QQ…');
     fetch(base + '/api/remind/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         deviceId: cloudDeviceId(),
-        wx: getWxCfg(),
+        wx: form,
         title: '✅ 生活管家提醒通道测试',
-        body: '云端微信推送正常，课程提醒将在上课前准时送达。\n—— 生活管家 · ' + new Date().toLocaleString('zh-CN', { hour12: false })
+        body: '云端推送正常，课程提醒将在上课前送达。\n—— 生活管家 · ' + new Date().toLocaleString('zh-CN', { hour12: false })
       })
     }).then(function (r) { return r.json().catch(function () { return {}; }); })
       .then(function (res) {
         if (res && res.ok) {
           const rs = Array.isArray(res.results) ? res.results : [];
           const okN = rs.filter(function (r) { return r && r.ok; }).length;
-          showToast('✅ 已发送（成功 ' + okN + '/' + rs.length + '），请在微信「服务号消息」查看');
+          showToast('✅ 已发送（成功 ' + okN + '/' + rs.length + '），请查看微信 / QQ');
         } else showToast(res && res.error ? res.error : '发送失败，请检查 Key 是否正确');
       }).catch(function () { showToast('发送失败：云端服务不可达'); });
   }
@@ -1403,12 +1417,11 @@ const Schedule = (function () {
     saveRemindSettings: saveRemindSettings,
     toggleRemindEnabled: toggleRemindEnabled,
     bootReminder: bootReminder,
-    // 云端推送（微信通道）
+    // 云端推送（微信/QQ 通道）
     cloudManualSync: cloudManualSync,
     cloudStatusRefresh: cloudStatusRefresh,
     sendCloudTest: sendCloudTest,
-    // 微信通道 Key/好友 界面填写（同云端同步模式）
-    saveWxConfig: saveWxConfig,
+    // 通道配置界面填写（保存统一走 saveRemindSettings）
     clearWxConfig: clearWxConfig,
     loadWxCfgIntoUI: loadWxCfgIntoUI,
     getWxCfg: getWxCfg,

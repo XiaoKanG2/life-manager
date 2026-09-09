@@ -180,6 +180,7 @@ const Schedule = (function () {
     const ok = await showConfirmModal('重置' + label, '将' + label + '课表恢复为模板内容，' + label + '已有的调整会被覆盖。确定重置吗？');
     if (!ok) return;
     saveWeek(weekKey, deepCopy(getTemplate()));
+    cloudQueueSoon(); // 重置后课程变化 → 重新同步云端提醒计划（否则被重置掉的课程旧提醒仍会照发）
     showToast(label + '已重置为模板');
     render();
   }

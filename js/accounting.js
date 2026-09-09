@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.20';
+const APP_VERSION = '5.22';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -2030,6 +2030,13 @@ function saveSchSyncConfigUI() {
   if (urlErr) { showToast(urlErr); return; }
   setSchSyncConfig({ url: url.replace(/\/+$/, ''), key, syncKey });
   updateSchSyncBadge();
+  // 课表同步 key 变化 = 云端提醒的终端标识变化 → 立即按新 key 重新上报（顺带删除本机旧随机桶），并刷新云端状态
+  if (typeof Schedule !== 'undefined' && Schedule.cloudQueueSoon) {
+    Schedule.cloudQueueSoon();
+    setTimeout(function () {
+      if (typeof Schedule !== 'undefined' && Schedule.cloudStatusRefresh) Schedule.cloudStatusRefresh();
+    }, 5000);
+  }
   if (!window.supabase) { showToast('Supabase 库未加载，请刷新页面后重试'); return; }
   showToast('正在测试连接…');
   testSupabaseConnectionWith(getSchSyncConfig()).then(({ ok, msg }) => {

@@ -1,10 +1,11 @@
 // ==================== 生活管家 · 云端提醒调度器（零依赖 Node） ====================
 // 职责：
 //   1. 静态托管 Web App（与纯静态部署等效）
-//   2. POST /api/remind/sync   接收设备上报的未来提醒计划（全量替换该设备）
+//   2. POST /api/remind/sync   接收设备上报的未来提醒计划（全量替换该设备；deleteBucket 可顺带删除本机旧终端桶）
 //   3. POST /api/remind/test   立即推送一条测试消息
-//   4. GET  /api/remind/status 查询云端配置/计划数/最近提醒时刻
-//   5. 每 20s tick：到点提醒 → 调微信推送通道（PushPlus）
+//   4. GET  /api/remind/status /api/remind/devices 查询云端状态（支持 ?deviceId= 区分终端）
+//   5. POST /api/remind/clear  清空全部云端提醒池（不区分终端/同步 key；换 key 或数据错乱兜底；config.json 设 adminKey 可加保护）
+//   6. 每 20s tick：到点提醒 → 调微信/QQ 推送通道（PushPlus）
 //
 // 推送配置优先级：
 //   1. 设备上报 wx（schedule.js 界面填写，localStorage 持久，随 sync/test 请求携带，快照进该设备计划）
@@ -98,9 +99,11 @@ function persistPlans() {
 
 const store = loadPlans();
 if (!store.devices) store.devices = {};
+if (!store.lastSync || typeof store.lastSync !== 'object') store.lastSync = {}; // deviceId → 最近一次上报时间
 
 // 设备上报：全量替换该设备未来计划；wx 为设备级推送通道（界面填写），快照进每条计划
-function applySync(deviceId, plans, wx) {
+// deleteBuckets：本机旧终端桶（如同一浏览器曾用随机 deviceId 上报、现切到同步 key），上报时顺带删除防双推
+function applySync(deviceId, plans, wx, deleteBuckets) {
   const now = Date.now();
   const valid = (Array.isArray(plans) ? plans : [])
     .filter(p => p && typeof p.ts === 'number' && p.ts > now - FIRE_WINDOW_MS)
@@ -112,20 +115,67 @@ function applySync(deviceId, plans, wx) {
     }))
     .sort((a, b) => a.ts - b.ts);
   store.devices[deviceId] = valid;
+  store.lastSync[deviceId] = now; // 记录该终端最近上报时间（用于区分终端/识别孤儿桶）
+  const dels = Array.isArray(deleteBuckets) ? deleteBuckets : (deleteBuckets ? [deleteBuckets] : []);
+  dels.forEach(d => {
+    if (d && d !== deviceId && store.devices[d]) { delete store.devices[d]; delete store.lastSync[d]; }
+  });
   persistPlans();
   return valid;
+}
+
+// 清空全部云端提醒池（不区分终端/同步 key）：换同步 key / 数据错乱时重置；各设备下次打开页面会自动重新上报
+function clearPool() {
+  const removed = {
+    devices: Object.keys(store.devices).length,
+    plans: totalPending()
+  };
+  store.devices = {};
+  store.lastSync = {};
+  persistPlans();
+  return removed;
+}
+
+// 某设备桶内最近一条未发送计划时刻（无则 null）
+function deviceNextFireAt(did) {
+  const now = Date.now();
+  const plans = store.devices[did] || [];
+  let min = null;
+  plans.forEach(p => {
+    if (p.sentAt) return;
+    if (p.ts >= now - TICK_MS && (min === null || p.ts < min)) min = p.ts;
+  });
+  return min;
 }
 
 function nextFireAt() {
   const now = Date.now();
   let min = null;
   Object.keys(store.devices).forEach(did => {
-    store.devices[did].forEach(p => {
-      if (p.sentAt) return;
-      if (p.ts >= now - TICK_MS && (min === null || p.ts < min)) min = p.ts;
-    });
+    const t = deviceNextFireAt(did);
+    if (t !== null && (min === null || t < min)) min = t;
   });
   return min;
+}
+
+// 设备清单（按最近上报时间倒序；老数据无 lastSync 视为 0 排末尾）
+function deviceList() {
+  const now = Date.now();
+  return Object.keys(store.devices)
+    .map(did => ({
+      deviceId: did,
+      plans: (store.devices[did] || []).filter(p => !p.sentAt && p.ts >= now - FIRE_WINDOW_MS).length,
+      nextFireAt: deviceNextFireAt(did),
+      lastSyncAt: store.lastSync[did] || null
+    }))
+    .sort((a, b) => (b.lastSyncAt || 0) - (a.lastSyncAt || 0));
+}
+
+// 某设备桶未来未发送计划预览（用于前端展示该终端的真实内容，区分终端排查提醒时刻）
+function devicePreview(did, limit) {
+  const plans = (store.devices[did] || []).filter(p => !p.sentAt);
+  const n = typeof limit === 'number' ? limit : 3;
+  return plans.slice(0, n).map(p => ({ ts: p.ts, title: p.title, body: p.body }));
 }
 
 function totalPending() {
@@ -308,7 +358,43 @@ const server = http.createServer(async (req, res) => {
 
   if (p === '/api/remind/status' && req.method === 'GET') {
     const cfg = loadConfig();
-    json(res, 200, { ok: true, configured: isConfigured(cfg), provider: isConfigured(cfg) ? cfg.provider : null, plans: totalPending(), nextFireAt: nextFireAt() });
+    // 支持 ?deviceId=xxx 区分终端：返回该设备桶明细 + 全局汇总；不带参数保持全局（向后兼容）
+    const did = u.searchParams.get('deviceId');
+    const body = {
+      ok: true,
+      configured: isConfigured(cfg),
+      provider: isConfigured(cfg) ? cfg.provider : null,
+      plans: totalPending(),
+      nextFireAt: nextFireAt(),
+      devices: deviceList().length
+    };
+    if (did) {
+      const bucket = Array.isArray(store.devices[did]) ? store.devices[did] : null;
+      body.device = bucket ? {
+        deviceId: did,
+        plans: bucket.filter(p => !p.sentAt && p.ts >= Date.now() - FIRE_WINDOW_MS).length,
+        nextFireAt: deviceNextFireAt(did),
+        lastSyncAt: store.lastSync[did] || null,
+        preview: devicePreview(did, 3)
+      } : null;
+    }
+    json(res, 200, body);
+    return;
+  }
+  if (p === '/api/remind/devices' && req.method === 'GET') {
+    json(res, 200, { ok: true, devices: deviceList() });
+    return;
+  }
+  if (p === '/api/remind/clear' && req.method === 'POST') {
+    const body = await readBody(req);
+    // 可选保护：config.json 配置 adminKey 后，清空必须携带正确的 adminKey（未配置则默认开放，同 test 接口信任级）
+    const cfg = loadConfig();
+    if (cfg.adminKey && String(body.adminKey || '') !== String(cfg.adminKey)) {
+      json(res, 403, { ok: false, error: '管理密钥不正确（服务器已配置 adminKey，需携带正确的 adminKey 才能清空）' });
+      return;
+    }
+    if (body.confirm !== true) { json(res, 400, { ok: false, error: 'missing confirm' }); return; }
+    json(res, 200, { ok: true, removed: clearPool() });
     return;
   }
   if (p === '/api/remind/test' && req.method === 'POST') {
@@ -333,7 +419,7 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const did = body.deviceId;
     if (!did) { json(res, 400, { ok: false, error: 'missing deviceId' }); return; }
-    const plans = applySync(did, body.plans, body.wx);
+    const plans = applySync(did, body.plans, body.wx, body.deleteBucket);
     // 刚上报的计划中可能已有到点（如当天首次打开 App 晚于提醒时刻）→ 立即补扫发送，不必等下个 tick
     if (processDue(Date.now())) persistPlans();
     json(res, 200, { ok: true, plans: plans.length, nextFireAt: nextFireAt() });
@@ -353,8 +439,13 @@ module.exports = {
   resolvePushCfg: resolvePushCfg,
   pushTargets: pushTargets,
   applySync: applySync,
+  clearPool: clearPool,
   firePush: firePush,
   processDue: processDue,
+  nextFireAt: nextFireAt,
+  deviceNextFireAt: deviceNextFireAt,
+  deviceList: deviceList,
+  devicePreview: devicePreview,
   isConfigured: isConfigured,
   loadConfig: loadConfig,
   store: store,

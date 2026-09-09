@@ -324,6 +324,7 @@
                     <div class="form-row">
                         <label class="form-label">推送通知（锁屏也能收）</label>
                         <div class="sch-remind-perm" id="schCloudStatus">正在查询云端状态…</div>
+                        <button class="sch-clear-pool" onclick="Schedule.cloudClearPool()">🧹 清空云端提醒池（全部终端，换同步 key 时用）</button>
                         <div class="form-row">
                             <label class="form-label">推送通道</label>
                             <select class="note-input" id="schChannel" onchange="Schedule.onChannelChange(this)">

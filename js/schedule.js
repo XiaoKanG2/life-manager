@@ -14,7 +14,8 @@ const Schedule = (function () {
   const REMIND_KEY = 'schedule_remind_cfg';          // { enabled, defaultLead, perSlot }
   const REMINDED_PREFIX = 'schedule_reminded_';       // 当日已提醒记录 schedule_reminded_YYYY-MM-DD
   const REMIND_LEAD_CHOICES = [5, 10, 15, 20, 30];    // 可选的提前分钟数
-  const CLOUD_KEY = 'schedule_cloud';                 // { deviceId, lastSyncAt } 云端推送登记
+  const CLOUD_KEY = 'schedule_cloud';                 // { deviceId, lastSyncAt }：随机终端兜底登记（有课表同步 key 时作回退/旧桶删除依据）
+  const SCH_SYNC_KEY = 'schedule_sync_config';        // 课表同步配置 {url,key,syncKey}：syncKey 配置后直接作为云端提醒的终端标识
   const WX_KEY = 'schedule_wx_cfg';                   // { provider:'pushplus', key, toSelf, friends:[{name,token}] } 微信推送通道
   const TEMPLATE_ID = '__template__'; // 模板模式下周实例的虚拟 key
 
@@ -117,6 +118,12 @@ const Schedule = (function () {
   }
 
   function deepCopy(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
 
   function fmtDate(d) {
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1244,13 +1251,29 @@ const Schedule = (function () {
   // 给同源后端调度器（server.js）。云端到点调微信推送（PushPlus），
   // 手机即使完全关闭网页也能收到微信消息。上报失败静默，不影响本地提醒。
 
-  function cloudDeviceId() {
+  // —— 云端终端标识 ——
+  // 优先取「课表同步 key」（设置 → 课表同步 → 同步密钥）作为云端提醒桶标识：
+  //   同一 key 的多个设备共享一个桶（同一份课表不重复推）；换 key = 换桶（旧桶残留可用「清空提醒池」兜底）。
+  // 未配置 key 时回退到本浏览器随机 deviceId（同一浏览器内稳定，清缓存 / 换设备会变）。
+  function cloudTerminal() {
+    const sc = loadJSON(SCH_SYNC_KEY, null);
+    const key = sc && typeof sc.syncKey === 'string' ? sc.syncKey.trim() : '';
+    if (key) return { id: key, kind: 'key', key: key };
     const c = loadJSON(CLOUD_KEY, null);
-    if (c && c.deviceId) return c.deviceId;
+    if (c && c.deviceId) return { id: c.deviceId, kind: 'random', key: '' };
     const id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     // 直写 localStorage，避免经 saveJSON 触发云同步钩子造成循环
     localStorage.setItem(CLOUD_KEY, JSON.stringify({ deviceId: id, lastSyncAt: 0 }));
-    return id;
+    return { id: id, kind: 'random', key: '' };
+  }
+
+  function cloudDeviceId() { return cloudTerminal().id; }
+
+  // 本浏览器曾用过的随机终端 id（schedule_cloud 留档）：切到「同步 key」桶后上报时顺带删除旧桶，防止新旧桶双推
+  function legacyRandomDeviceId() {
+    const c = loadJSON(CLOUD_KEY, null);
+    if (c && c.deviceId && String(c.deviceId).length > 10 && String(c.deviceId).indexOf('d') === 0) return c.deviceId;
+    return '';
   }
 
   function cloudApiBase() {
@@ -1311,7 +1334,13 @@ const Schedule = (function () {
     if (!base) return;
     const nowMs = Date.now();
     if (!force && nowMs - cloudLastSyncAt < 3600000) return; // 非强制 1 小时内最多一次
-    const payload = { deviceId: cloudDeviceId(), plans: buildCloudPlan(), wx: getWxCfg() };
+    const term = cloudTerminal();
+    const payload = { deviceId: term.id, plans: buildCloudPlan(), wx: getWxCfg() };
+    // 终端由随机 → 课表同步 key 后，上报时顺带删除本机旧随机桶（防新旧桶双推）
+    if (term.kind === 'key') {
+      const legacy = legacyRandomDeviceId();
+      if (legacy && legacy !== term.id) payload.deleteBucket = legacy;
+    }
     fetch(base + '/api/remind/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1320,7 +1349,11 @@ const Schedule = (function () {
       .then(function (res) {
         if (res && res.ok) {
           cloudLastSyncAt = Date.now();
-          localStorage.setItem(CLOUD_KEY, JSON.stringify({ deviceId: cloudDeviceId(), lastSyncAt: cloudLastSyncAt }));
+          // 仅随机终端需要本地登记；key 终端不上写 schedule_cloud（保留其中的旧随机 id 供 deleteBucket 引用）
+          const t = cloudTerminal();
+          if (t.kind === 'random') {
+            localStorage.setItem(CLOUD_KEY, JSON.stringify({ deviceId: t.id, lastSyncAt: cloudLastSyncAt }));
+          }
         }
       }).catch(function () {});
   }
@@ -1331,6 +1364,7 @@ const Schedule = (function () {
     setTimeout(cloudStatusRefresh, 800);
   }
 
+  // 云端状态（区分终端）：本机桶明细 + 全局设备数/旧设备提示
   function cloudStatusRefresh() {
     const el = document.getElementById('schCloudStatus');
     if (!el) return;
@@ -1339,19 +1373,60 @@ const Schedule = (function () {
     const wx = getWxCfg();
     if (!wx.key) { el.textContent = '未填写推送 Key：下方选择通道并粘贴 Key 保存后即可生效'; return; }
     el.textContent = '正在查询云端状态…';
-    fetch(base + '/api/remind/status', { cache: 'no-store' })
-      .then(function (r) { return r.json().catch(function () { return null; }); })
-      .then(function (res) {
-        if (!res) { el.textContent = '云端服务未响应（本地/离线可忽略）'; return; }
-        const n = res.plans || 0;
-        let t = '无';
-        if (res.nextFireAt) {
-          const nt = new Date(res.nextFireAt);
-          t = (nt.getMonth() + 1) + '月' + nt.getDate() + '日 ' + String(nt.getHours()).padStart(2, '0') + ':' + String(nt.getMinutes()).padStart(2, '0');
+    const term = cloudTerminal();
+    const did = term.id;
+    const fmt = function (ms) {
+      if (!ms) return null;
+      const d = new Date(ms);
+      return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    };
+    const ago = function (ms) {
+      const min = Math.round((Date.now() - ms) / 60000);
+      if (min < 60) return min + ' 分钟前';
+      const h = Math.round(min / 60);
+      if (h < 24) return h + ' 小时前';
+      return Math.round(h / 24) + ' 天前';
+    };
+    Promise.all([
+      fetch(base + '/api/remind/status?deviceId=' + encodeURIComponent(did), { cache: 'no-store' }).then(function (r) { return r.json().catch(function () { return null; }); }),
+      fetch(base + '/api/remind/devices', { cache: 'no-store' }).then(function (r) { return r.json().catch(function () { return null; }); })
+    ]).then(function (arr) {
+      const res = arr[0];
+      const devs = arr[1] && Array.isArray(arr[1].devices) ? arr[1].devices : null;
+      if (!res) { el.textContent = '云端服务未响应（本地/离线可忽略）'; return; }
+      const self = res.device;
+      const rows = [];
+      const nowMs = Date.now();
+      // 终端标识说明行：key 终端直显课表同步 key（可辨识、换 key 即换桶）；随机终端提示建议配置
+      if (term.kind === 'key') {
+        rows.push('<div class="sch-status-id">🆔 云端终端 = 课表同步 key：<b>' + escapeHtml(term.key) + '</b></div>');
+      } else {
+        rows.push('<div class="sch-status-warn">⚠️ 未配置课表同步 key：当前为随机终端 ' + did + '，清缓存 / 换设备后会变化，建议在「设置 → 课表同步」填写同步密钥</div>');
+      }
+      if (self && self.plans > 0) {
+        rows.push('<div class="sch-status-main">本机已同步 ' + self.plans + ' 条提醒' + (self.nextFireAt ? ' · 下一条 ' + fmt(self.nextFireAt) : '') + '</div>');
+      } else if (self && self.plans === 0) {
+        rows.push('<div class="sch-status-main">本机已同步 0 条（总开关关闭或近期无课）</div>');
+      } else {
+        rows.push('<div class="sch-status-main">本机尚未上报：点下方「保存设置」后 3 秒内自动同步</div>');
+      }
+      const meta = [];
+      if (devs) {
+        meta.push('云端共 ' + devs.length + ' 台设备');
+        const orphans = devs.filter(function (d) { return d.deviceId !== did && d.lastSyncAt && nowMs - d.lastSyncAt > 2 * 86400000; });
+        if (orphans.length) {
+          meta.push('<span class="sch-status-warn">⚠️ ' + orphans.length + ' 台旧设备 >2 天未同步，其提醒仍会推送</span>');
         }
-        el.textContent = '✅ 云端已排 ' + n + ' 条 · 最近提醒 ' + t + ' · Key 随计划生效';
-      })
-      .catch(function () { el.textContent = '云端服务未响应（本地/离线可忽略）'; });
+      }
+      if (self && self.lastSyncAt) {
+        meta.push('本机 ' + ago(self.lastSyncAt) + ' 同步');
+        if (nowMs - self.lastSyncAt > 86400000) {
+          rows.push('<div class="sch-status-warn">⚠️ 本机超 1 天未同步：云端提醒可能过期，请每天打开一次</div>');
+        }
+      }
+      if (meta.length) rows.push('<div class="sch-status-sub">' + meta.join(' · ') + '</div>');
+      el.innerHTML = rows.join('');
+    }).catch(function () { el.textContent = '云端服务未响应（本地/离线可忽略）'; });
   }
 
   function sendCloudTest() {
@@ -1377,6 +1452,27 @@ const Schedule = (function () {
           showToast('✅ 已发送（成功 ' + okN + '/' + rs.length + '），请查看微信 / QQ');
         } else showToast(res && res.error ? res.error : '发送失败，请检查 Key 是否正确');
       }).catch(function () { showToast('发送失败：云端服务不可达'); });
+  }
+
+  // 清空云端全部提醒池（不区分终端 / 课表同步 key）：更换同步 key、旧设备残留重复推送等场景的兜底重置
+  async function cloudClearPool() {
+    const base = cloudApiBase();
+    if (!base) { showToast('非在线环境，无法操作云端'); return; }
+    const ok = await showConfirmModal('清空云端提醒池', '将清除云端「所有设备」的全部提醒计划（不区分终端 / 课表同步 key），用于更换同步 key、旧 key 残留重复推送等场景。\n\n清除后各设备下次打开本页或点「保存设置」时会自动重新上报，无需重新填写任何配置。\n\n确定清空全部？');
+    if (!ok) return;
+    showToast('正在清空云端提醒池…');
+    fetch(base + '/api/remind/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true })
+    }).then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (res) {
+        if (res && res.ok) {
+          const r = res.removed || {};
+          showToast('✅ 已清空 ' + r.devices + ' 台设备 / ' + r.plans + ' 条待发提醒');
+          cloudStatusRefresh();
+        } else showToast(res && res.error ? res.error : '清空失败（云端未响应）', 'error');
+      }).catch(function () { showToast('清空失败：云端服务不可达', 'error'); });
   }
 
   // ==================== 公开 API ====================
@@ -1420,8 +1516,11 @@ const Schedule = (function () {
     bootReminder: bootReminder,
     // 云端推送（微信/QQ 通道）
     cloudManualSync: cloudManualSync,
+    cloudQueueSoon: cloudQueueSoon,
     cloudStatusRefresh: cloudStatusRefresh,
     sendCloudTest: sendCloudTest,
+    cloudClearPool: cloudClearPool,
+    cloudDeviceId: cloudDeviceId,
     // 通道配置界面填写（保存统一走 saveRemindSettings）
     clearWxConfig: clearWxConfig,
     loadWxCfgIntoUI: loadWxCfgIntoUI,

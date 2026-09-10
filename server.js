@@ -5,7 +5,8 @@
 //   3. POST /api/remind/test   立即推送一条测试消息
 //   4. GET  /api/remind/status /api/remind/devices 查询云端状态（支持 ?deviceId= 区分终端）
 //   5. GET  /api/remind/sent   查询已发送记录（计划时刻 ts vs 实际发送时刻 sentAt，诊断推送延迟来源）
-//   6. POST /api/remind/clear  清空全部云端提醒池（不区分终端/同步 key；换 key 或数据错乱兜底；config.json 设 adminKey 可加保护）
+//   6. POST|GET /api/remind/clear 清空云端提醒池：带 deviceId（=课表同步 key）只清该桶，不带则清全部；
+//      confirm 必填；config.json 设 adminKey 可加保护（GET 形式便于浏览器地址栏手动调用）
 //   7. 每 20s tick：到点提醒 → 调微信/QQ 推送通道（PushPlus）
 //
 // 推送配置优先级：
@@ -142,6 +143,19 @@ function clearPool() {
   store.lastSync = {};
   persistPlans();
   return removed;
+}
+
+// 清空单个终端桶（deviceId = 课表同步 key）：用于精确清理某台设备的重复/遗留提醒，不影响其他桶
+// 返回 { found, removed:{devices,plans} }；桶不存在时 found=false（幂等，不算错误）
+function clearDevice(deviceId) {
+  const did = String(deviceId || '').trim();
+  if (!did || !Array.isArray(store.devices[did])) return { found: false, removed: { devices: 0, plans: 0 } };
+  const now = Date.now();
+  const plans = store.devices[did].filter(p => !p.sentAt && p.ts >= now - FIRE_WINDOW_MS).length;
+  delete store.devices[did];
+  delete store.lastSync[did];
+  persistPlans();
+  return { found: true, removed: { devices: 1, plans: plans } };
 }
 
 // 某设备桶内最近一条未发送计划时刻（无则 null）
@@ -413,16 +427,34 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, { ok: true, sent: deviceSent(did, lim) });
     return;
   }
-  if (p === '/api/remind/clear' && req.method === 'POST') {
-    const body = await readBody(req);
+  if (p === '/api/remind/clear' && (req.method === 'POST' || req.method === 'GET')) {
+    // 两种调用方式：
+    //   POST /api/remind/clear  body {confirm:true, deviceId?, adminKey?}
+    //   GET  /api/remind/clear?confirm=1&deviceId=<同步key>&adminKey=xxx   （便于浏览器地址栏直接调用）
+    // deviceId 传了 → 只清该终端桶（= 该课表同步 key）；不传 → 清空全部桶（向后兼容）
+    const body = req.method === 'POST' ? await readBody(req) : {};
+    const q = u.searchParams;
+    const confirm = req.method === 'POST'
+      ? body.confirm === true
+      : (q.get('confirm') === '1' || q.get('confirm') === 'true');
+    const adminKey = req.method === 'POST' ? body.adminKey : q.get('adminKey');
+    const did = String((req.method === 'POST' ? body.deviceId : null) || q.get('deviceId') || '').trim();
     // 可选保护：config.json 配置 adminKey 后，清空必须携带正确的 adminKey（未配置则默认开放，同 test 接口信任级）
     const cfg = loadConfig();
-    if (cfg.adminKey && String(body.adminKey || '') !== String(cfg.adminKey)) {
+    if (cfg.adminKey && String(adminKey || '') !== String(cfg.adminKey)) {
       json(res, 403, { ok: false, error: '管理密钥不正确（服务器已配置 adminKey，需携带正确的 adminKey 才能清空）' });
       return;
     }
-    if (body.confirm !== true) { json(res, 400, { ok: false, error: 'missing confirm' }); return; }
-    json(res, 200, { ok: true, removed: clearPool() });
+    if (!confirm) {
+      json(res, 400, { ok: false, error: 'missing confirm（清空需显式确认：POST body 带 confirm:true，或 GET 加 ?confirm=1）' });
+      return;
+    }
+    if (did) {
+      const r = clearDevice(did);
+      json(res, 200, { ok: true, scope: 'device', deviceId: did, found: r.found, removed: r.removed });
+      return;
+    }
+    json(res, 200, { ok: true, scope: 'all', removed: clearPool() });
     return;
   }
   if (p === '/api/remind/test' && req.method === 'POST') {
@@ -468,6 +500,7 @@ module.exports = {
   pushTargets: pushTargets,
   applySync: applySync,
   clearPool: clearPool,
+  clearDevice: clearDevice,
   firePush: firePush,
   processDue: processDue,
   nextFireAt: nextFireAt,

@@ -4,8 +4,9 @@
 //   2. POST /api/remind/sync   接收设备上报的未来提醒计划（全量替换该设备；deleteBucket 可顺带删除本机旧终端桶）
 //   3. POST /api/remind/test   立即推送一条测试消息
 //   4. GET  /api/remind/status /api/remind/devices 查询云端状态（支持 ?deviceId= 区分终端）
-//   5. POST /api/remind/clear  清空全部云端提醒池（不区分终端/同步 key；换 key 或数据错乱兜底；config.json 设 adminKey 可加保护）
-//   6. 每 20s tick：到点提醒 → 调微信/QQ 推送通道（PushPlus）
+//   5. GET  /api/remind/sent   查询已发送记录（计划时刻 ts vs 实际发送时刻 sentAt，诊断推送延迟来源）
+//   6. POST /api/remind/clear  清空全部云端提醒池（不区分终端/同步 key；换 key 或数据错乱兜底；config.json 设 adminKey 可加保护）
+//   7. 每 20s tick：到点提醒 → 调微信/QQ 推送通道（PushPlus）
 //
 // 推送配置优先级：
 //   1. 设备上报 wx（schedule.js 界面填写，localStorage 持久，随 sync/test 请求携带，快照进该设备计划）
@@ -27,6 +28,7 @@ const DATA_DIR = path.join(ROOT, 'data');
 const PLANS_PATH = path.join(DATA_DIR, 'plans.json');
 const TICK_MS = 20000;          // 调度精度 20s
 const FIRE_WINDOW_MS = 10 * 60000; // 到点后 10 分钟内补发，更久则丢弃
+const SENT_KEEP = 50;           // 每终端保留的已发送记录条数（诊断延迟用，防止 plans.json 无限增长）
 
 // ==================== 配置 ====================
 
@@ -114,7 +116,13 @@ function applySync(deviceId, plans, wx, deleteBuckets) {
       wx: (wx && isConfigured(normalizeWx(wx))) ? normalizeWx(wx) : null
     }))
     .sort((a, b) => a.ts - b.ts);
-  store.devices[deviceId] = valid;
+  // 保留该桶最近的已发送记录（诊断「计划时刻 vs 实际发送时刻」定位延迟来源）：
+  // 已发送计划不会被重发（processDue 只处理 !sentAt），最多留 SENT_KEEP 条防 plans.json 无限增长
+  const sentKept = (store.devices[deviceId] || [])
+    .filter(p => p && p.sentAt)
+    .sort((a, b) => b.sentAt - a.sentAt)
+    .slice(0, SENT_KEEP);
+  store.devices[deviceId] = sentKept.concat(valid).sort((a, b) => a.ts - b.ts);
   store.lastSync[deviceId] = now; // 记录该终端最近上报时间（用于区分终端/识别孤儿桶）
   const dels = Array.isArray(deleteBuckets) ? deleteBuckets : (deleteBuckets ? [deleteBuckets] : []);
   dels.forEach(d => {
@@ -176,6 +184,20 @@ function devicePreview(did, limit) {
   const plans = (store.devices[did] || []).filter(p => !p.sentAt);
   const n = typeof limit === 'number' ? limit : 3;
   return plans.slice(0, n).map(p => ({ ts: p.ts, title: p.title, body: p.body }));
+}
+
+// 已发送记录（按实际发送时刻倒序）：delayMs = sentAt - ts
+//   delayMs ≈ 0 → 云端准点发出（延迟在 PushPlus 平台投递）
+//   delayMs 明显 > 0 → 云端晚发（如沙箱休眠唤醒后补发 / 服务未运行）
+function deviceSent(did, limit) {
+  const n = (typeof limit === 'number' && limit > 0) ? Math.min(limit, 100) : 20;
+  const out = [];
+  (did ? [did] : Object.keys(store.devices)).forEach(k => {
+    (store.devices[k] || []).forEach(p => {
+      if (p && p.sentAt) out.push({ deviceId: k, ts: p.ts, sentAt: p.sentAt, delayMs: p.sentAt - p.ts, title: p.title });
+    });
+  });
+  return out.sort((a, b) => b.sentAt - a.sentAt).slice(0, n);
 }
 
 function totalPending() {
@@ -385,6 +407,12 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, { ok: true, devices: deviceList() });
     return;
   }
+  if (p === '/api/remind/sent' && req.method === 'GET') {
+    const did = u.searchParams.get('deviceId');
+    const lim = parseInt(u.searchParams.get('limit'), 10);
+    json(res, 200, { ok: true, sent: deviceSent(did, lim) });
+    return;
+  }
   if (p === '/api/remind/clear' && req.method === 'POST') {
     const body = await readBody(req);
     // 可选保护：config.json 配置 adminKey 后，清空必须携带正确的 adminKey（未配置则默认开放，同 test 接口信任级）
@@ -446,6 +474,7 @@ module.exports = {
   deviceNextFireAt: deviceNextFireAt,
   deviceList: deviceList,
   devicePreview: devicePreview,
+  deviceSent: deviceSent,
   isConfigured: isConfigured,
   loadConfig: loadConfig,
   store: store,

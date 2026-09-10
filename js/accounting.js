@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.22';
+const APP_VERSION = '5.23';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -551,6 +551,8 @@ async function init() {
     requestPersistentStorage();
     // 启动课表上课提醒引擎（默认页非课表时也常驻自检）
     if (typeof Schedule !== 'undefined' && Schedule.bootReminder) Schedule.bootReminder();
+    // 课表模板跨设备自动同步：启动后拉取云端，若云端更新且本机无改动则自动应用（不阻塞初始化）
+    schSyncAutoPull();
 
     // 尝试从 IndexedDB 恢复 syncConfig（如果 localStorage 被清除）
     const recovered = await tryRecoverSyncConfigFromIDB();
@@ -2037,6 +2039,8 @@ function saveSchSyncConfigUI() {
       if (typeof Schedule !== 'undefined' && Schedule.cloudStatusRefresh) Schedule.cloudStatusRefresh();
     }, 5000);
   }
+  // 首次配置/切换同步 key 后自动拉取云端课表（本机无改动时自动应用）
+  setTimeout(function () { schSyncAutoPull(); }, 1200);
   if (!window.supabase) { showToast('Supabase 库未加载，请刷新页面后重试'); return; }
   showToast('正在测试连接…');
   testSupabaseConnectionWith(getSchSyncConfig()).then(({ ok, msg }) => {
@@ -2084,6 +2088,7 @@ async function schSyncPush() {
       updated_at: new Date().toISOString()
     }, { onConflict: 'sync_key' });
     if (error) throw error;
+    if (typeof Schedule !== 'undefined' && Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
     showToast('课表模板已上传到云端 ✅');
   } catch (e) { showToast('上传失败：' + describeSyncError(e), 'error'); }
 }
@@ -2098,8 +2103,11 @@ async function schSyncPull() {
     const { data, error } = await client.from('sync_data').select('data, updated_at').eq('sync_key', schSyncRowKey()).single();
     if (error && error.code !== 'PGRST116') throw error;
     if (!data || !data.data || !Schedule.importTemplateData(data.data.template)) { showToast('云端暂无课表数据'); return; }
+    // 模板更新后重建「本周及以后」的周实例，否则已初始化过的周仍显示旧课（用户视角＝没同步）
+    if (Schedule.clearFutureWeekInstances) Schedule.clearFutureWeekInstances();
+    if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
     updateSchSyncBadge();
-    showToast('课表模板已下载 ✅');
+    showToast('课表模板已下载（未来周已按新模板重建）✅');
   } catch (e) { showToast('下载失败：' + describeSyncError(e), 'error'); }
 }
 
@@ -2117,9 +2125,81 @@ async function schSyncForcePull() {
     if (!data || !data.data || !data.data.template) { showToast('云端暂无课表数据'); return; }
     if (!Schedule.importTemplateData(data.data.template)) { showToast('云端课表数据格式无效', 'error'); return; }
     if (Schedule.clearWeekInstances) Schedule.clearWeekInstances(); // 清空周实例 → 重新按云端模板懒生成
+    if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
     showToast('已从云端完全恢复课表 ✅');
   } catch (e) { showToast('同步失败：' + describeSyncError(e), 'error'); }
 }
+
+// —— 模板内容签名：跨设备比较是否一致（不依赖各设备时钟，避免时钟偏差误判） ——
+function schTemplateSignature(t) {
+  if (!t || typeof t !== 'object') return '';
+  return Object.keys(t).sort()
+    .filter(k => /^d[1-5]_p[1-7]$/.test(k))
+    .map(k => {
+      const c = t[k] || {};
+      return k + ':' + (c.name || '') + '|' + (c.cls || '') + '|' + (c.room || '');
+    }).join(';');
+}
+
+// ==================== 课表模板自动同步 ====================
+// A 端：模板修改 → 3s 防抖静默上传（schedule.js 的 markTemplateDirty 调 window.schSyncAutoPush）
+// B 端：启动后自动拉取；云端与本机不一致时——本机无改动则自动应用并重建未来周实例，有改动则提示冲突
+let _schPushTimer = null;
+let _schApplyingCloud = false;
+
+function schSyncAutoPush() {
+  if (_schApplyingCloud || !isSchSyncConfigured()) return;
+  if (_schPushTimer) clearTimeout(_schPushTimer);
+  _schPushTimer = setTimeout(function () { _schPushTimer = null; schSyncPushSilent(); }, 3000);
+}
+
+async function schSyncPushSilent() {
+  const client = ensureSchClient();
+  if (!client || typeof Schedule === 'undefined' || !Schedule.getTemplateData) return;
+  try {
+    const { error } = await client.from('sync_data').upsert({
+      sync_key: schSyncRowKey(),
+      data: { template: Schedule.getTemplateData() },
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'sync_key' });
+    if (error) throw error;
+    if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
+    console.log('[课表同步] 模板已自动上传云端');
+  } catch (e) { console.warn('[课表同步] 自动上传失败：' + describeSyncError(e)); }
+}
+
+async function schSyncAutoPull() {
+  if (!isSchSyncConfigured()) return;
+  const client = ensureSchClient();
+  if (!client || typeof Schedule === 'undefined' || !Schedule.getTemplateData) return;
+  try {
+    const { data, error } = await client.from('sync_data').select('data').eq('sync_key', schSyncRowKey()).single();
+    if (error && error.code !== 'PGRST116') throw error;
+    if (!data || !data.data || !data.data.template) return; // 云端尚无课表（本机首次配置）→ 由本机上传建立
+    const cloudTpl = data.data.template;
+    if (schTemplateSignature(cloudTpl) === schTemplateSignature(Schedule.getTemplateData())) {
+      if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now()); // 已一致 → 对齐时间戳
+      return;
+    }
+    if (Schedule.hasUnsyncedTemplate && Schedule.hasUnsyncedTemplate()) {
+      showToast('云端与本机课表都有修改，请在「课表同步」中手动选择上传或下载', 'error');
+      return;
+    }
+    _schApplyingCloud = true;
+    let ok = false;
+    try {
+      ok = Schedule.importTemplateData(cloudTpl);
+      if (ok && Schedule.clearFutureWeekInstances) Schedule.clearFutureWeekInstances();
+    } finally { _schApplyingCloud = false; }
+    if (ok) {
+      if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
+      if (Schedule.cloudQueueSoon) Schedule.cloudQueueSoon();
+      showToast('课表已从云端自动更新 ✅');
+    }
+  } catch (e) { console.warn('[课表同步] 自动拉取失败：' + describeSyncError(e)); }
+}
+
+window.schSyncAutoPush = schSyncAutoPush;
 
 // ==================== 弹窗遮罩关闭 ====================
 

@@ -16,6 +16,7 @@ const Schedule = (function () {
   const REMIND_LEAD_CHOICES = [5, 10, 15, 20, 30];    // 可选的提前分钟数
   const CLOUD_KEY = 'schedule_cloud';                 // { deviceId, lastSyncAt }：随机终端兜底登记（有课表同步 key 时作回退/旧桶删除依据）
   const SCH_SYNC_KEY = 'schedule_sync_config';        // 课表同步配置 {url,key,syncKey}：syncKey 配置后直接作为云端提醒的终端标识
+  const TEMPLATE_SYNC_META = 'schedule_template_sync_meta'; // { syncedAt, dirtyAt } 模板云同步元数据（同机时钟比较，判断本地是否有未上传改动）
   const WX_KEY = 'schedule_wx_cfg';                   // { provider:'pushplus', key, toSelf, friends:[{name,token}] } 微信推送通道
   const TEMPLATE_ID = '__template__'; // 模板模式下周实例的虚拟 key
 
@@ -173,10 +174,44 @@ const Schedule = (function () {
     saveJSON(WEEKS_KEY, weeks);
   }
 
+  // ===== 模板云同步元数据（跨设备自动同步用）=====
+  //   dirtyAt > syncedAt ⇒ 本机模板有尚未上传云端的改动（同机时钟比较，可靠）
+  function getTemplateSyncMeta() {
+    const m = loadJSON(TEMPLATE_SYNC_META, null) || {};
+    return { syncedAt: Number(m.syncedAt) || 0, dirtyAt: Number(m.dirtyAt) || 0 };
+  }
+  function setTemplateSyncedAt(ts) {
+    const m = getTemplateSyncMeta();
+    saveJSON(TEMPLATE_SYNC_META, { syncedAt: Number(ts) || Date.now(), dirtyAt: m.dirtyAt });
+  }
+  function markTemplateDirty() {
+    const m = getTemplateSyncMeta();
+    saveJSON(TEMPLATE_SYNC_META, { syncedAt: m.syncedAt, dirtyAt: Date.now() });
+    // 通知外层（accounting.js）在已配置课表同步时自动上传（3s 防抖）
+    if (typeof window.schSyncAutoPush === 'function') window.schSyncAutoPush();
+  }
+  function hasUnsyncedTemplate() {
+    const m = getTemplateSyncMeta();
+    return m.dirtyAt > m.syncedAt;
+  }
+
+  // 清空「本周及以后」的周实例（应用云端模板后按新模板重建；已过去的历史周保留）
+  function clearFutureWeekInstances() {
+    const weeks = getWeeks();
+    const thisMon = weekKeyOf(0);
+    let n = 0;
+    Object.keys(weeks).forEach(function (k) {
+      if (k >= thisMon) { delete weeks[k]; n++; }
+    });
+    saveJSON(WEEKS_KEY, weeks);
+    render();
+    return n;
+  }
+
   // 读写入口（统一区分模板 / 周实例）
   function getData(weekKey) { return weekKey === TEMPLATE_ID ? getTemplate() : getWeekData(weekKey); }
   function saveData(weekKey, data) {
-    if (weekKey === TEMPLATE_ID) saveTemplate(data);
+    if (weekKey === TEMPLATE_ID) { saveTemplate(data); markTemplateDirty(); }
     else saveWeek(weekKey, data);
     cloudQueueSoon(); // 课表变化 → 重新同步云端提醒计划
   }
@@ -764,6 +799,12 @@ const Schedule = (function () {
     return r;
   }
 
+  // 班级紧凑显示：「4年级8班」→「4.8班」（推送标题尽量短，通知栏完整可见）；其他写法原样保留
+  function clsShort(cls) {
+    if (!cls) return '';
+    return String(cls).trim().replace(/^(\d+)\s*年级\s*(\d+)\s*班$/, '$1.$2班');
+  }
+
   function normFriends(list) {
     const seen = {};
     const out = [];
@@ -1303,17 +1344,17 @@ const Schedule = (function () {
         if (startMin === null || lead === null) continue;
         const startMs = new Date(dateStr + 'T00:00:00').getTime() + startMin * 60000;
         const leadText = lead >= 60 ? (Math.floor(lead / 60) + ' 小时' + (lead % 60 ? ' ' + (lead % 60) + ' 分钟' : '')) : (lead + ' 分钟');
-        const leadShort = lead >= 60 ? ((Math.floor(lead / 60) + '小时' + (lead % 60 ? (lead % 60) + '分' : '')) + '后') : (lead + '分后');
         const dm = dateStr.split('-');
         const dateText = parseInt(dm[1], 10) + '月' + parseInt(dm[2], 10) + '日';
         const hmStart = PERIODS[p - 1].time.split('~')[0];
         const room = roomDisplay(course.room);
         // 课程名不参与推送文案：课表通常整学期单一课程，标题保留 时间/班级/机房 即可
-        const whoText = [course.cls, room].filter(Boolean).join(' · '); // 班级 · 机房
+        const clsText = clsShort(course.cls);
+        const whoText = [clsText, room].filter(Boolean).join(' · '); // 班级 · 机房
         plans.push({
           ts: startMs - lead * 60000,
-          // 标题 = 关键信息一行（何时 + 哪个班/哪个机房），锁屏通知一眼可见
-          title: '⏰ ' + leadShort + ' ' + dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + hmStart + ' ' + whoText,
+          // 标题 = 极简一行「班级 机房 上课时刻」（如「4.8班 机房② 8:20」），保证通知栏完整展示不被截断
+          title: [clsText, room, hmStart].filter(Boolean).join(' '),
           // 正文两行：第 1 行 = 何时（日期 星期 节次 上课时刻 + 提前量）；第 2 行 = 班级 · 机房（完整详情）
           body: dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + ' ' + hmStart + ' 上课（提前 ' + leadText + '）\n' + whoText
         });
@@ -1380,6 +1421,11 @@ const Schedule = (function () {
       const d = new Date(ms);
       return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
     };
+    const fmtSec = function (ms) {
+      if (!ms) return null;
+      const d = new Date(ms);
+      return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0');
+    };
     const ago = function (ms) {
       const min = Math.round((Date.now() - ms) / 60000);
       if (min < 60) return min + ' 分钟前';
@@ -1389,10 +1435,12 @@ const Schedule = (function () {
     };
     Promise.all([
       fetch(base + '/api/remind/status?deviceId=' + encodeURIComponent(did), { cache: 'no-store' }).then(function (r) { return r.json().catch(function () { return null; }); }),
-      fetch(base + '/api/remind/devices', { cache: 'no-store' }).then(function (r) { return r.json().catch(function () { return null; }); })
+      fetch(base + '/api/remind/devices', { cache: 'no-store' }).then(function (r) { return r.json().catch(function () { return null; }); }),
+      fetch(base + '/api/remind/sent?deviceId=' + encodeURIComponent(did) + '&limit=3', { cache: 'no-store' }).then(function (r) { return r.json().catch(function () { return null; }); })
     ]).then(function (arr) {
       const res = arr[0];
       const devs = arr[1] && Array.isArray(arr[1].devices) ? arr[1].devices : null;
+      const sent = arr[2] && Array.isArray(arr[2].sent) ? arr[2].sent : null;
       if (!res) { el.textContent = '云端服务未响应（本地/离线可忽略）'; return; }
       const self = res.device;
       const rows = [];
@@ -1425,6 +1473,14 @@ const Schedule = (function () {
         }
       }
       if (meta.length) rows.push('<div class="sch-status-sub">' + meta.join(' · ') + '</div>');
+      // 最近发送记录（诊断延迟）：计划时刻 → 实际发出时刻。
+      // 延迟秒级 = 云端准点发出（慢在 PushPlus 通道投递）；延迟分钟级 = 云端晚发（服务未运行/唤醒后补发）
+      if (sent && sent.length) {
+        const s = sent[0];
+        const secs = Math.max(0, Math.round(s.delayMs / 1000));
+        const delayTxt = secs < 60 ? (secs + ' 秒') : (Math.round(secs / 60) + ' 分钟');
+        rows.push('<div class="sch-status-sub">📤 最近发送：计划 ' + fmtSec(s.ts) + ' → 发出 ' + fmtSec(s.sentAt) + '（延迟 ' + delayTxt + '）</div>');
+      }
       el.innerHTML = rows.join('');
     }).catch(function () { el.textContent = '云端服务未响应（本地/离线可忽略）'; });
   }
@@ -1533,6 +1589,10 @@ const Schedule = (function () {
     getTemplateData: getTemplateData,
     importTemplateData: importTemplateData,
     clearWeekInstances: clearWeekInstances,
+    clearFutureWeekInstances: clearFutureWeekInstances,
+    getTemplateSyncMeta: getTemplateSyncMeta,
+    setTemplateSyncedAt: setTemplateSyncedAt,
+    hasUnsyncedTemplate: hasUnsyncedTemplate,
     // 仅供测试/调试
     _runCheck: runReminderCheck,
     _cfg: getRemindCfg,

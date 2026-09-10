@@ -799,6 +799,15 @@ const Schedule = (function () {
     return r;
   }
 
+  // 通知文案专用：带圈数字 ①-⑳ 转阿拉伯数字（PushPlus/微信通知栏不渲染带圈字符，会直接丢失显示为空）
+  // 仅用于云端推送文案，App 内课表显示仍保留 ①（roomDisplay 不变）
+  function notifDigits(s) {
+    if (!s) return '';
+    return String(s).replace(/[\u2460-\u2473]/g, function (ch) {
+      return String(ch.charCodeAt(0) - 0x2460 + 1);
+    });
+  }
+
   // 班级紧凑显示：「4年级8班」→「4.8班」（推送标题尽量短，通知栏完整可见）；其他写法原样保留
   function clsShort(cls) {
     if (!cls) return '';
@@ -1347,13 +1356,13 @@ const Schedule = (function () {
         const dm = dateStr.split('-');
         const dateText = parseInt(dm[1], 10) + '月' + parseInt(dm[2], 10) + '日';
         const hmStart = PERIODS[p - 1].time.split('~')[0];
-        const room = roomDisplay(course.room);
+        const room = notifDigits(roomDisplay(course.room)); // 带圈数字转阿拉伯数字（通知栏不渲染 ①）
         // 课程名不参与推送文案：课表通常整学期单一课程，标题保留 时间/班级/机房 即可
-        const clsText = clsShort(course.cls);
+        const clsText = notifDigits(clsShort(course.cls));
         const whoText = [clsText, room].filter(Boolean).join(' · '); // 班级 · 机房
         plans.push({
           ts: startMs - lead * 60000,
-          // 标题 = 极简一行「班级 机房 上课时刻」（如「4.8班 机房② 8:20」），保证通知栏完整展示不被截断
+          // 标题 = 极简一行「班级 机房 上课时刻」（如「3.9班 机房1 10:20」），保证通知栏完整展示不被截断
           title: [clsText, room, hmStart].filter(Boolean).join(' '),
           // 正文两行：第 1 行 = 何时（日期 星期 节次 上课时刻 + 提前量）；第 2 行 = 班级 · 机房（完整详情）
           body: dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + ' ' + hmStart + ' 上课（提前 ' + leadText + '）\n' + whoText

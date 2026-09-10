@@ -1369,10 +1369,32 @@ const Schedule = (function () {
     cloudTimer = setTimeout(function () { syncCloudPlan(true); }, 3000);
   }
 
+  // 上报门控：空白设备不上报，避免在云端注册出「无课表、无推送配置」的无用终端桶。
+  // 触发场景：发布平台的自动验证会用全新浏览器环境打开页面（无 localStorage），
+  // 若不加门控，每次部署都会凭空多出几个随机终端桶（且与真实设备重复推送）。
+  // 满足任一即视为「这台设备确实需要云端提醒」：
+  //   ① 已填推送 Token  ② 已填课表同步 key  ③ 本机曾成功上报过（老用户）
+  //   ④ 用户确实编辑/导入过课表（localStorage 里有 schedule_template）
+  //     注意：不能直接用 getTemplateData()——未存模板时会返回内置演示课表，恒为非空，门控就失效了
+  function cloudHasIntent() {
+    try {
+      const wx = getWxCfg();
+      if (wx && wx.key) return true;
+      const sc = loadJSON(SCH_SYNC_KEY, null);
+      if (sc && typeof sc.syncKey === 'string' && sc.syncKey.trim()) return true;
+      const c = loadJSON(CLOUD_KEY, null);
+      if (c && c.lastSyncAt > 0) return true;
+      const tpl = loadJSON(TEMPLATE_KEY, null);
+      if (tpl && typeof tpl === 'object' && !Array.isArray(tpl) && Object.keys(tpl).length) return true;
+    } catch (e) {}
+    return false;
+  }
+
   function syncCloudPlan(force) {
     if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = null; }
     const base = cloudApiBase();
     if (!base) return;
+    if (!cloudHasIntent()) return; // 空白设备：不上报、不注册云端终端桶
     const nowMs = Date.now();
     if (!force && nowMs - cloudLastSyncAt < 3600000) return; // 非强制 1 小时内最多一次
     const term = cloudTerminal();
@@ -1400,6 +1422,7 @@ const Schedule = (function () {
   }
 
   function cloudManualSync() {
+    if (!cloudHasIntent()) { showToast('尚未配置课表或推送渠道，无需同步'); return; }
     showToast('正在同步提醒计划到云端…');
     syncCloudPlan(true);
     setTimeout(cloudStatusRefresh, 800);
@@ -1574,6 +1597,7 @@ const Schedule = (function () {
     cloudManualSync: cloudManualSync,
     cloudQueueSoon: cloudQueueSoon,
     cloudStatusRefresh: cloudStatusRefresh,
+    cloudHasIntent: cloudHasIntent,
     sendCloudTest: sendCloudTest,
     cloudClearPool: cloudClearPool,
     cloudDeviceId: cloudDeviceId,

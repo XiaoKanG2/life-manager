@@ -7,7 +7,8 @@
 //   5. GET  /api/remind/sent   查询已发送记录（计划时刻 ts vs 实际发送时刻 sentAt，诊断推送延迟来源）
 //   6. POST|GET /api/remind/clear 清空云端提醒池：带 deviceId（=课表同步 key）只清该桶，不带则清全部；
 //      confirm 必填；config.json 设 adminKey 可加保护（GET 形式便于浏览器地址栏手动调用）
-//   7. 每 20s tick：到点提醒 → 调微信/QQ 推送通道（PushPlus）
+//   7. GET  /api/remind/export 导出完整计划池（发布前回灌本地 data/plans.json / 手动备份）
+//   8. 每 20s tick：到点提醒 → 调微信/QQ 推送通道（PushPlus）
 //
 // 推送配置优先级：
 //   1. 设备上报 wx（schedule.js 界面填写，localStorage 持久，随 sync/test 请求携带，快照进该设备计划）
@@ -15,7 +16,12 @@
 //      （QQ 机器人渠道：{ "provider": "qq", "key": "<token>", "option": "<群配置编码>" }）
 //   均未配置时默认 mock 模式（只打日志不发推送），/status 的 configured=false。
 //
-// 计划持久化：data/plans.json（尽力而为；容器重启后若文件系统保留则继续生效）
+// 计划持久化（防「部署清空」）：
+//   · 主文件 data/plans.json + 滚动快照 data/plans.snap-<bootId>.json（同内容，保留 3 份）
+//   · 启动时扫描 data/plans*.json 择优载入（savedAt 最新优先，其次计划条数最多）——
+//     发布工具按目录打包上传，会把本地 data/ 覆盖到沙箱；若上传的是空/旧文件，
+//     快照会自动兜底恢复，线上计划不会被清空
+//   · DATA_DIR 可用环境变量覆盖：本地调试请指向临时目录，避免把测试数据带进部署包
 
 const http = require('http');
 const fs = require('fs');
@@ -25,8 +31,12 @@ const https = require('https');
 const PORT = process.env.PORT || 8080;
 const ROOT = __dirname;
 const CONFIG_PATH = path.join(ROOT, 'config.json');
-const DATA_DIR = path.join(ROOT, 'data');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
 const PLANS_PATH = path.join(DATA_DIR, 'plans.json');
+const SNAP_PREFIX = 'plans.snap-';  // 滚动快照前缀（文件名含本次启动 id，与本地开发目录互不覆盖）
+const SNAP_KEEP = 3;                // 保留快照份数
+const BOOT_ID = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+const SNAP_PATH = path.join(DATA_DIR, SNAP_PREFIX + BOOT_ID + '.json');
 const TICK_MS = 20000;          // 调度精度 20s
 const FIRE_WINDOW_MS = 10 * 60000; // 到点后 10 分钟内补发，更久则丢弃
 const SENT_KEEP = 50;           // 每终端保留的已发送记录条数（诊断延迟用，防止 plans.json 无限增长）
@@ -89,20 +99,85 @@ function resolvePushCfg(wx) {
 
 // ==================== 计划存储 ====================
 
+let loadInfo = null; // 本次载入来源（诊断用：file/savedAt/plans/candidates）
+
+// 读取单个候选文件 → { store, savedAt, plans }；格式不合法返回 null
+function readStoreFile(fp) {
+  try {
+    const s = JSON.parse(fs.readFileSync(fp, 'utf8'));
+    if (!s || typeof s !== 'object' || !s.devices || typeof s.devices !== 'object') return null;
+    let n = 0;
+    Object.keys(s.devices).forEach(k => { if (Array.isArray(s.devices[k])) n += s.devices[k].length; });
+    return { store: s, savedAt: Number(s.savedAt) || 0, plans: n, file: fp };
+  } catch (e) { return null; }
+}
+
+// 择优载入：主文件 + 滚动快照一起比较，选「最新且最完整」的一份
+// （部署上传若用空/旧 plans.json 覆盖了沙箱，此处会自动回退到快照，避免线上计划被清空）
 function loadPlans() {
-  try { return JSON.parse(fs.readFileSync(PLANS_PATH, 'utf8')); } catch (e) { return { devices: {} }; }
+  let files = [];
+  try {
+    files = fs.readdirSync(DATA_DIR)
+      .filter(f => /^plans(\..+)?\.json$/.test(f))
+      .map(f => path.join(DATA_DIR, f));
+  } catch (e) { files = []; }
+  const cands = files.map(readStoreFile).filter(Boolean);
+  if (!cands.length) return { devices: {}, lastSync: {} };
+  cands.sort((a, b) => (b.savedAt - a.savedAt) || (b.plans - a.plans));
+  const best = cands[0];
+  loadInfo = {
+    file: path.basename(best.file),
+    savedAt: best.savedAt,
+    plans: best.plans,
+    candidates: cands.length,
+    recovered: best.file !== PLANS_PATH && cands.length > 1
+  };
+  return best.store;
+}
+
+// 清理旧快照，只保留最近 SNAP_KEEP 份
+function pruneSnaps() {
+  try {
+    const snaps = fs.readdirSync(DATA_DIR)
+      .filter(f => f.indexOf(SNAP_PREFIX) === 0 && /\.json$/.test(f))
+      .map(f => {
+        const fp = path.join(DATA_DIR, f);
+        let m = 0;
+        try { m = fs.statSync(fp).mtimeMs; } catch (e) {}
+        return { fp: fp, m: m };
+      })
+      .sort((a, b) => b.m - a.m);
+    snaps.slice(SNAP_KEEP).forEach(x => { try { fs.unlinkSync(x.fp); } catch (e) {} });
+  } catch (e) {}
 }
 
 function persistPlans() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(PLANS_PATH, JSON.stringify(store));
+    store.savedAt = Date.now();
+    const data = JSON.stringify(store);
+    fs.writeFileSync(PLANS_PATH, data);
+    fs.writeFileSync(SNAP_PATH, data); // 同内容滚动快照：主文件被部署覆盖时用于恢复
+    pruneSnaps();
   } catch (e) { console.error('persist fail', e.message); }
 }
 
 const store = loadPlans();
 if (!store.devices) store.devices = {};
 if (!store.lastSync || typeof store.lastSync !== 'object') store.lastSync = {}; // deviceId → 最近一次上报时间
+if (!store.savedAt) store.savedAt = 0;
+if (loadInfo) {
+  console.log('[plans] 载入 ' + loadInfo.file + '（' + loadInfo.plans + ' 条计划 / ' + loadInfo.candidates + ' 个候选' +
+    (loadInfo.recovered ? '，已从快照恢复' : '') + '）');
+}
+// 启动即固化一份快照（载入数据非空时）：保证此后任何一次部署覆盖主文件都能恢复
+try {
+  if (Object.keys(store.devices).length) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(SNAP_PATH, JSON.stringify(store));
+    pruneSnaps();
+  }
+} catch (e) {}
 
 // 设备上报：全量替换该设备未来计划；wx 为设备级推送通道（界面填写），快照进每条计划
 // deleteBuckets：本机旧终端桶（如同一浏览器曾用随机 deviceId 上报、现切到同步 key），上报时顺带删除防双推
@@ -358,6 +433,15 @@ const MIME = {
 
 function serveStatic(req, res, pathname) {
   if (pathname === '/') pathname = '/index.html';
+  // 私有文件一律不对外暴露：data/（计划池含推送 Token）、config.json（密钥）、源码与点文件
+  // 注：此前 /data/plans.json 可被任何人直接下载，已封堵
+  if (/^\/(data|node_modules)(\/|$)/.test(pathname) ||
+      /(^|\/)\./.test(pathname) ||
+      /^\/(config\.json|server\.js|package\.json|package-lock\.json)$/.test(pathname)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('404 Not Found');
+    return;
+  }
   const filePath = path.normalize(path.join(ROOT, decodeURIComponent(pathname)));
   if (!filePath.startsWith(ROOT)) { res.writeHead(403); res.end('forbidden'); return; }
   fs.readFile(filePath, (err, buf) => {
@@ -427,6 +511,23 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, { ok: true, sent: deviceSent(did, lim) });
     return;
   }
+  if (p === '/api/remind/export' && req.method === 'GET') {
+    // 导出完整计划池（各终端桶 + lastSync）。用途：
+    //   ① 发布前回灌：curl .../api/remind/export > data/plans.json 后再部署，线上计划原样保留
+    //   ② 手动备份 / 迁移
+    const cfg = loadConfig();
+    if (cfg.adminKey && String(u.searchParams.get('adminKey') || '') !== String(cfg.adminKey)) {
+      json(res, 403, { ok: false, error: '管理密钥不正确（服务器已配置 adminKey，需携带 adminKey）' });
+      return;
+    }
+    json(res, 200, {
+      ok: true,
+      savedAt: store.savedAt || 0,
+      devices: store.devices,
+      lastSync: store.lastSync
+    });
+    return;
+  }
   if (p === '/api/remind/clear' && (req.method === 'POST' || req.method === 'GET')) {
     // 两种调用方式：
     //   POST /api/remind/clear  body {confirm:true, deviceId?, adminKey?}
@@ -485,7 +586,17 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, { ok: true, plans: plans.length, nextFireAt: nextFireAt() });
     return;
   }
-  if (p === '/api/health') { json(res, 200, { ok: true, tickMs: TICK_MS, plans: totalPending() }); return; }
+  if (p === '/api/health') {
+    json(res, 200, {
+      ok: true,
+      tickMs: TICK_MS,
+      plans: totalPending(),
+      savedAt: store.savedAt || 0,
+      loadedFrom: loadInfo ? loadInfo.file : null,
+      recoveredFromSnapshot: !!(loadInfo && loadInfo.recovered)
+    });
+    return;
+  }
   if (p.startsWith('/api/')) { json(res, 404, { ok: false, error: 'unknown api' }); return; }
 
   // 静态资源
@@ -501,6 +612,11 @@ module.exports = {
   applySync: applySync,
   clearPool: clearPool,
   clearDevice: clearDevice,
+  loadPlans: loadPlans,
+  readStoreFile: readStoreFile,
+  persistPlans: persistPlans,
+  loadInfo: function () { return loadInfo; },
+  paths: { DATA_DIR: DATA_DIR, PLANS_PATH: PLANS_PATH, SNAP_PREFIX: SNAP_PREFIX },
   firePush: firePush,
   processDue: processDue,
   nextFireAt: nextFireAt,

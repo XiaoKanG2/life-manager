@@ -184,10 +184,25 @@ try {
   }
 } catch (e) {}
 
+// 计划去重键：ts + 标题（标题剥掉补发前缀 [补]，否则补发过的记录无法与新上报的原始标题匹配）
+function planKey(ts, title) {
+  return Math.floor(ts) + '|' + String(title || '').replace(/^\[补\]\s*/, '');
+}
+
 // 设备上报：全量替换该设备未来计划；wx 为设备级推送通道（界面填写），快照进每条计划
 // deleteBuckets：本机旧终端桶（如同一浏览器曾用随机 deviceId 上报、现切到同步 key），上报时顺带删除防双推
 function applySync(deviceId, plans, wx, deleteBuckets) {
   const now = Date.now();
+  // 保留该桶最近的已发送记录（诊断「计划时刻 vs 实际发送时刻」定位延迟来源）：
+  // 已发送计划不会被重发（processDue 只处理 !sentAt），最多留 SENT_KEEP 条防 plans.json 无限增长
+  const sentKept = (store.devices[deviceId] || [])
+    .filter(p => p && p.sentAt)
+    .sort((a, b) => b.sentAt - a.sentAt)
+    .slice(0, SENT_KEEP);
+  // 已发送记录的去重键集合：同 ts+标题 的计划已发过，绝不能再作为未发送计划入桶，
+  // 否则 App 重新打开/同步时会把仍处补发窗口内的已发提醒重发一遍（实测出现重复 [补] 推送）
+  const sentKeys = new Set(sentKept.map(p => planKey(p.ts, p.title)));
+  const seen = new Set();
   const valid = (Array.isArray(plans) ? plans : [])
     .filter(p => p && typeof p.ts === 'number' && p.ts > now - FIRE_WINDOW_MS)
     .map(p => ({
@@ -196,13 +211,13 @@ function applySync(deviceId, plans, wx, deleteBuckets) {
       body: String(p.body || '').slice(0, 160),
       wx: (wx && isConfigured(normalizeWx(wx))) ? normalizeWx(wx) : null
     }))
+    .filter(p => {
+      const k = planKey(p.ts, p.title);
+      if (sentKeys.has(k) || seen.has(k)) return false; // 已发送过 / 本次上报内重复 → 丢弃
+      seen.add(k);
+      return true;
+    })
     .sort((a, b) => a.ts - b.ts);
-  // 保留该桶最近的已发送记录（诊断「计划时刻 vs 实际发送时刻」定位延迟来源）：
-  // 已发送计划不会被重发（processDue 只处理 !sentAt），最多留 SENT_KEEP 条防 plans.json 无限增长
-  const sentKept = (store.devices[deviceId] || [])
-    .filter(p => p && p.sentAt)
-    .sort((a, b) => b.sentAt - a.sentAt)
-    .slice(0, SENT_KEEP);
   store.devices[deviceId] = sentKept.concat(valid).sort((a, b) => a.ts - b.ts);
   store.lastSync[deviceId] = now; // 记录该终端最近上报时间（用于区分终端/识别孤儿桶）
   const dels = Array.isArray(deleteBuckets) ? deleteBuckets : (deleteBuckets ? [deleteBuckets] : []);

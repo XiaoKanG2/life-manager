@@ -41,11 +41,10 @@ const Schedule = (function () {
   // 固定行（不可排课，仅展示）。duty = 每日值周安排 { 星期: 文本 }，
   // 文本可带单双周前缀（'单：值周' / '双周：值周'），不匹配奇偶的周灰显
   const FIXED_ROWS = [
-    { after: 1, time: '9:00~9:30', label: '课间操值周', duty: { 1: '值周', 4: '值周' } },
-    { after: 5, time: '12:15~12:45', label: '午餐值周', duty: { 2: '值周', 3: '单周值周', 4: '值周' } },
-    { after: 5, time: '13:00~13:45', label: '午休值周', duty: { 3: '值周', 5: '值周' } },
-    { after: 7, time: '15:15~15:30', label: '眼保健操 / 间餐时间' },
-    { after: 10, time: '17:20', label: '放学值周', duty: { 2: '单：值周', 3: '值周', 4: '单：值周', 5: '双：值周' } }
+    { after: 1, time: '9:00~9:30', label: '守操', duty: { 1: '值周', 4: '值周' } },
+    { after: 5, time: '12:15~12:45', label: '守餐', duty: { 2: '值周', 3: '单周值周', 4: '值周' } },
+    { after: 5, time: '13:00~13:45', label: '守午休', duty: { 3: '值周', 5: '值周' } },
+    { after: 10, time: '17:20', label: '放学', duty: { 2: '单：值周', 3: '值周', 4: '单：值周', 5: '双：值周' } }
   ];
 
   // 初始模板（来自 2026-09 完整课表：信息科技/编程课 + 延时段，room = 机房号）
@@ -239,6 +238,17 @@ const Schedule = (function () {
     return p ? p.plain : (text || '');
   }
 
+  // 值周展示文本：格子里写「值周」的，按所在行显示为 守操/守餐/守午休/放学（保留单双周前缀）
+  // 存储数据不变（仍是 '值周'），仅展示/推送时替换；用户显式输入的其他文本原样显示
+  function dutyDisplayOf(text, label) {
+    const s = String(text || '');
+    const p = dutyPrefixParse(s);
+    if (!p) return s === '值周' ? (label || s) : s; // 无前缀：仅「值周」二字替换为行名
+    const prefix = p.plain ? s.slice(0, s.indexOf(p.plain)) : ''; // '单周' / '单：' / '双周：' 等原样保留
+    const plain = p.plain === '值周' ? (label || '值周') : p.plain;
+    return prefix + plain;
+  }
+
   // 该课程本周是否上课（weeks 缺省 = 每周都上）
   function courseActiveThisWeek(course, parity) {
     if (!course || !course.weeks || course.weeks === 'all') return true;
@@ -249,7 +259,7 @@ const Schedule = (function () {
   // 与 FIXED_ROWS 对齐的数组：非值周行 = null；值周行 = { 1..5: '文本' }，文本可带「单：/双：」前缀。
   // 拖动/编辑后写入 schedule_duty_cfg，并经课表同步 payload（data.duty）跨设备同步。
   const DUTY_KEY = 'schedule_duty_cfg';
-  const DUTY_VER = 2; // v2：修正午餐值周默认数据（周二~周四）；版本不符的旧存档自动回退内置默认
+  const DUTY_VER = 3; // v3：移除眼保健操固定行（行数 5→4）；版本不符的旧存档自动回退内置默认
 
   function getDutyRows() {
     const saved = loadJSON(DUTY_KEY, null);
@@ -588,7 +598,7 @@ const Schedule = (function () {
               cell.dataset.occupied = '1';
               cell.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
             } else if (txt) {
-              cell.textContent = txt;
+              cell.textContent = dutyDisplayOf(txt, fr.label);
               cell.dataset.occupied = '1';
               bindDutyDrag(cell, ri, d);
             } else {
@@ -1130,7 +1140,7 @@ const Schedule = (function () {
     const fr = FIXED_ROWS[rowIdx];
     if (!fr || !fr.duty) return;
     const rows = getDutyRows();
-    const cur = (rows[rowIdx] && rows[rowIdx][day]) || '';
+    const cur = dutyDisplayOf((rows[rowIdx] && rows[rowIdx][day]) || '', fr.label);
     const tip = fr.label + '（' + DAY_NAMES[day - 1] + ' ' + fr.time + '）\n' +
       '输入值周安排；前缀「单：」= 仅单周、「双：」= 仅双周；留空 = 删除';
     const v = prompt(tip, cur);
@@ -1851,7 +1861,7 @@ const Schedule = (function () {
         plans.push({
           ts: new Date(dateStr + 'T00:00:00').getTime() + startMin * 60000 - lead * 60000,
           title: notifDigits(label) + ' ' + hmStart,
-          body: dutyDateText + ' ' + DAY_NAMES[dow - 1] + ' ' + hmStart + ' ' + label + '（提前 ' + leadText + weeksTag + '）\n' + notifDigits(dutyPlainOf(txt))
+          body: dutyDateText + ' ' + DAY_NAMES[dow - 1] + ' ' + hmStart + ' ' + label + '（提前 ' + leadText + weeksTag + '）\n' + notifDigits(dutyDisplayOf(txt, label))
         });
       });
     }

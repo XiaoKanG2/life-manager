@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.30';
+const APP_VERSION = '5.31';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -994,6 +994,12 @@ function renderStatsDetail(records, accounts) {
 
 let lineChartInstance = null;
 
+// 图表 Y 轴刻度：脱敏时同样隐藏金额数字（避免统计分析脱敏后 Y 轴仍泄露金额量级）
+function chartYTick(v) {
+  if (!amountVisible) return '¥***';
+  return '¥' + (v >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0));
+}
+
 function renderLineChart(timeline) {
   const canvas = document.getElementById('lineChart');
   if (!canvas) return;
@@ -1088,7 +1094,7 @@ function renderLineChart(timeline) {
           grid: { color: '#F0F0F0' },
           ticks: {
             font: { size: 11 },
-            callback: function(v) { return '¥' + (v >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0)); }
+            callback: function(v) { return chartYTick(v); }
           },
           beginAtZero: false
         }
@@ -1191,7 +1197,7 @@ function renderTotalAssetChart(timeline) {
           grid: { color: '#F0F0F0' },
           ticks: {
             font: { size: 11 },
-            callback: function(v) { return '¥' + (v >= 10000 ? (v / 10000).toFixed(1) + '万' : v.toFixed(0)); }
+            callback: function(v) { return chartYTick(v); }
           },
           beginAtZero: false
         }

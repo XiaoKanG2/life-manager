@@ -286,6 +286,15 @@
                         <input type="text" class="note-input" id="schCourseRoomCustom" placeholder="输入机房号，如：④" maxlength="6" style="display:none;margin-top:8px">
                     </div>
                     <div class="form-row">
+                        <label class="form-label">单双周</label>
+                        <select class="note-input" id="schCourseWeeks">
+                            <option value="">每周都上</option>
+                            <option value="odd">仅单周上</option>
+                            <option value="even">仅双周上</option>
+                        </select>
+                        <div class="sch-remind-hint">隔周上的课选「仅单周/仅双周」，该周不上时灰显且不提醒</div>
+                    </div>
+                    <div class="form-row">
                         <label class="form-label">上课提醒</label>
                         <select class="note-input" id="schCourseRemind" onchange="Schedule.onRemindChange()"></select>
                         <div class="sch-remind-hint">该节课的提醒时间，不选则跟随全局默认</div>
@@ -320,6 +329,11 @@
                         <label class="form-label">默认提醒时间</label>
                         <select class="note-input" id="schRemindLead"></select>
                         <div class="sch-remind-hint">未单独设置的课，统一按此时间提前提醒</div>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">单双周设置</label>
+                        <select class="note-input" id="schOddAnchor"></select>
+                        <div class="sch-remind-hint" id="schOddAnchorHint"></div>
                     </div>
                     <div class="form-row">
                         <label class="form-label">推送通知（锁屏也能收）</label>

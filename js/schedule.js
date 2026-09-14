@@ -17,12 +17,14 @@ const Schedule = (function () {
   const CLOUD_KEY = 'schedule_cloud';                 // { deviceId, lastSyncAt }：随机终端兜底登记（有课表同步 key 时作回退/旧桶删除依据）
   const SCH_SYNC_KEY = 'schedule_sync_config';        // 课表同步配置 {url,key,syncKey}：syncKey 配置后直接作为云端提醒的终端标识
   const TEMPLATE_SYNC_META = 'schedule_template_sync_meta'; // { syncedAt, dirtyAt } 模板云同步元数据（同机时钟比较，判断本地是否有未上传改动）
+  const WEEK_EDIT_KEY = 'schedule_week_edited';       // { 'YYYY-MM-DD': ts } 被手动改过的周实例（不再自动跟随模板）
+  const ODD_ANCHOR_KEY = 'schedule_odd_anchor';       // 'YYYY-MM-DD'：单周锚点（该周一为单周，隔周轮换；默认 2026-09-14 那周为单周）
   const WX_KEY = 'schedule_wx_cfg';                   // { provider:'pushplus', key, toSelf, friends:[{name,token}] } 微信推送通道
   const TEMPLATE_ID = '__template__'; // 模板模式下周实例的虚拟 key
 
   const DAY_NAMES = ['星期一', '星期二', '星期三', '星期四', '星期五'];
 
-  // 可排课节次
+  // 可排课节次（p8 延时一源表未给时间 → 不提醒；p9/p10 延时二/三）
   const PERIODS = [
     { p: 1, label: '第1节', time: '8:20~9:00' },
     { p: 2, label: '第2节', time: '9:30~10:10' },
@@ -30,34 +32,46 @@ const Schedule = (function () {
     { p: 4, label: '第4节', time: '11:05~11:35' },
     { p: 5, label: '第5节', time: '11:45~12:15' },
     { p: 6, label: '第6节', time: '14:00~14:35' },
-    { p: 7, label: '第7节', time: '14:45~15:15' }
+    { p: 7, label: '第7节', time: '14:45~15:15' },
+    { p: 8, label: '延时一', time: '' },
+    { p: 9, label: '延时二', time: '16:10~16:40' },
+    { p: 10, label: '延时三', time: '16:50~17:20' }
   ];
 
-  // 固定行（不可排课，仅展示）：after = 排在第几节之后
+  // 固定行（不可排课，仅展示）。duty = 每日值周安排 { 星期: 文本 }，
+  // 文本可带单双周前缀（'单：值周' / '双周：值周'），不匹配奇偶的周灰显
   const FIXED_ROWS = [
-    { after: 1, time: '9:00~9:30', label: '升旗仪式 / 课间操' },
-    { after: 5, time: '12:15~14:00', label: '午餐 / 午休' },
-    { after: 7, time: '15:15~15:30', label: '眼保健操 / 间餐时间' }
+    { after: 1, time: '9:00~9:30', label: '课间操值周', duty: { 1: '值周', 4: '值周' } },
+    { after: 5, time: '12:15~12:45', label: '午餐值周', duty: { 2: '值周', 3: '单周值周', 4: '值周' } },
+    { after: 5, time: '13:00~13:45', label: '午休值周', duty: { 3: '值周', 5: '值周' } },
+    { after: 7, time: '15:15~15:30', label: '眼保健操 / 间餐时间' },
+    { after: 10, time: '17:20', label: '放学值周', duty: { 2: '单：值周', 3: '值周', 4: '单：值周', 5: '双：值周' } }
   ];
 
-  // 初始模板（来自用户机房排课表截图：信息科技/编程课，room = 机房号）
+  // 初始模板（来自 2026-09 完整课表：信息科技/编程课 + 延时段，room = 机房号）
   const DEFAULT_TEMPLATE = {
-    d1_p7: { name: '信息科技/编程', cls: '4年级7班', room: '②' },
     d2_p1: { name: '信息科技/编程', cls: '3年级8班', room: '②' },
-    d2_p6: { name: '信息科技/编程', cls: '4年级7班', room: '②' },
-    d2_p7: { name: '信息科技/编程', cls: '3年级5班', room: '①' },
     d3_p1: { name: '信息科技/编程', cls: '3年级6班', room: '①' },
-    d3_p2: { name: '信息科技/编程', cls: '4年级8班', room: '①' },
-    d3_p4: { name: '信息科技/编程', cls: '4年级6班', room: '②' },
-    d3_p5: { name: '信息科技/编程', cls: '3年级1班', room: '③' },
     d4_p1: { name: '信息科技/编程', cls: '4年级8班', room: '②' },
-    d4_p3: { name: '信息科技/编程', cls: '3年级9班', room: '①' },
-    d4_p4: { name: '信息科技/编程', cls: '3年级10班', room: '①' },
-    d4_p6: { name: '信息科技/编程', cls: '3年级4班', room: '①' },
     d5_p1: { name: '信息科技/编程', cls: '3年级7班', room: '③' },
+    d3_p2: { name: '信息科技/编程', cls: '4年级8班', room: '①' },
     d5_p2: { name: '信息科技/编程', cls: '4年级6班', room: '②' },
+    d4_p3: { name: '信息科技/编程', cls: '3年级9班', room: '①' },
+    d3_p4: { name: '信息科技/编程', cls: '4年级6班', room: '②' },
+    d4_p4: { name: '信息科技/编程', cls: '3年级10班', room: '①' },
+    d3_p5: { name: '信息科技/编程', cls: '3年级1班', room: '③' },
     d5_p5: { name: '信息科技/编程', cls: '3年级2班', room: '②' },
-    d5_p6: { name: '信息科技/编程', cls: '3年级3班', room: '③' }
+    d2_p6: { name: '信息科技/编程', cls: '4年级7班', room: '②' },
+    d4_p6: { name: '信息科技/编程', cls: '3年级4班', room: '①' },
+    d5_p6: { name: '信息科技/编程', cls: '3年级3班', room: '③' },
+    d1_p7: { name: '信息科技/编程', cls: '4年级7班', room: '②' },
+    d2_p7: { name: '信息科技/编程', cls: '3年级5班', room: '①' },
+    // 延时段（源表：延时二/三有课，延时一未排）
+    d1_p9: { name: '少儿编程' },
+    d1_p10: { name: '少儿编程' },
+    d2_p10: { name: '少科院', weeks: 'odd' },
+    d3_p10: { name: '作业时光1', cls: '5年级10班' },
+    d5_p10: { name: '作业时光', cls: '双周：2年级8班' }
   };
 
   // 旧数据修复（幂等，每次渲染前都会执行）：
@@ -94,8 +108,38 @@ const Schedule = (function () {
     if (weekChanged) saveJSON(WEEKS_KEY, weeks);
   }
 
+  // ③ 单双周前缀归一化（幂等）：名称/班级里的「单：/单周：/双：/双周：」前缀 → weeks 字段
+  //    （修复早期把「双周」写进班级导致单双周过滤失效的数据；对模板与所有周实例生效）
+  function normalizeWeeksPrefix(store) {
+    if (!store || typeof store !== 'object') return 0;
+    let n = 0;
+    Object.keys(store).forEach(function (slot) {
+      const c = store[slot];
+      if (!c || typeof c !== 'object') return;
+      ['name', 'cls'].forEach(function (f) {
+        const m = typeof c[f] === 'string' && c[f].match(/^(单|双)周?[：:](.+)$/);
+        if (!m) return;
+        const parity = m[1] === '单' ? 'odd' : 'even';
+        if (!c.weeks) { c.weeks = parity; n++; }
+        c[f] = m[2].trim();
+      });
+    });
+    return n;
+  }
+  function migrateWeeksPrefix() {
+    const t = loadJSON(TEMPLATE_KEY, null);
+    if (t && normalizeWeeksPrefix(t) > 0) saveJSON(TEMPLATE_KEY, t);
+    const weeks = loadJSON(WEEKS_KEY, {});
+    let changed = false;
+    Object.keys(weeks).forEach(function (wk) {
+      if (normalizeWeeksPrefix(weeks[wk]) > 0) changed = true;
+    });
+    if (changed) saveJSON(WEEKS_KEY, weeks);
+  }
+
   let templateMode = false;
   let drag = null;            // 拖拽状态
+  let dutyClickGuard = 0;     // 拖拽结束后的短暂静默期（防止回弹时误触编辑）
   let modalCtx = null;        // { weekKey, slot } 当前编辑的格子
   let remindTimer = null;     // 最近一次提醒的定时器
   let remindInterval = null;  // 兜底轮询定时器
@@ -145,6 +189,106 @@ const Schedule = (function () {
     const fri = new Date(mon);
     fri.setDate(mon.getDate() + 4);
     return (mon.getMonth() + 1) + '.' + mon.getDate() + ' ~ ' + (fri.getMonth() + 1) + '.' + fri.getDate();
+  }
+
+  // ==================== 单双周（隔周课表，v5.28）====================
+  // 规则：锚点周一（默认 2026-09-14）所在周为「单周」，之后每过一周单/双轮换。
+  // 课程对象可带 weeks 字段：'odd'=仅单周 / 'even'=仅双周 / 缺省=每周。
+  // 奇偶不匹配的课：界面灰显 +「单/双」角标，本地提醒与云端计划均跳过。
+  const ODD_ANCHOR_DEFAULT = '2026-09-14'; // 本周（9.14~9.20）为单周
+
+  function getOddAnchor() {
+    const a = loadJSON(ODD_ANCHOR_KEY, ODD_ANCHOR_DEFAULT);
+    return (/^\d{4}-\d{2}-\d{2}$/.test(a) ? a : ODD_ANCHOR_DEFAULT);
+  }
+
+  // 设置锚点（传空 = 恢复默认）；change=true 时重渲染 + 重报云端计划
+  function setOddAnchor(weekKey, change) {
+    const v = (/^\d{4}-\d{2}-\d{2}$/.test(weekKey) ? weekKey : ODD_ANCHOR_DEFAULT);
+    localStorage.setItem(ODD_ANCHOR_KEY, JSON.stringify(v));
+    if (change) { render(); cloudQueueSoon(); } // 奇偶变化 → 界面与云端计划都跟随
+    return v;
+  }
+
+  // 某周的奇偶：'odd'=单周 / 'even'=双周（weekKey = 该周周一日期）
+  function weekParity(weekKey) {
+    const mon = new Date(weekKey + 'T00:00:00');
+    const anchor = new Date(getOddAnchor() + 'T00:00:00');
+    const diffDays = Math.round((mon - anchor) / 86400000);
+    return (((diffDays / 7) % 2 + 2) % 2 === 0) ? 'odd' : 'even';
+  }
+
+  function parityText(p) { return p === 'even' ? '双周' : '单周'; }
+
+  // 值周文本的单双周前缀解析：「单周值周」「单：值周」「双周：值周」等 → { parity, plain }；无前缀 → null
+  function dutyPrefixParse(text) {
+    const s = String(text || '');
+    let m = /^(单|双)周(.+)$/.exec(s);
+    if (m) return { parity: m[1] === '单' ? 'odd' : 'even', plain: m[2].trim() };
+    m = /^(单|双)[：:](.+)$/.exec(s);
+    if (m) return { parity: m[1] === '单' ? 'odd' : 'even', plain: m[2].trim() };
+    return null;
+  }
+  function dutyParityOf(text) {
+    const p = dutyPrefixParse(text);
+    return p ? p.parity : null;
+  }
+  // 值周文本 → 去掉单双周前缀的展示文本（'单：值周' / '单周值周' → '值周'）
+  function dutyPlainOf(text) {
+    const p = dutyPrefixParse(text);
+    return p ? p.plain : (text || '');
+  }
+
+  // 该课程本周是否上课（weeks 缺省 = 每周都上）
+  function courseActiveThisWeek(course, parity) {
+    if (!course || !course.weeks || course.weeks === 'all') return true;
+    return course.weeks === parity;
+  }
+
+  // ==================== 值周数据层（可拖动/编辑/跨设备同步）====================
+  // 与 FIXED_ROWS 对齐的数组：非值周行 = null；值周行 = { 1..5: '文本' }，文本可带「单：/双：」前缀。
+  // 拖动/编辑后写入 schedule_duty_cfg，并经课表同步 payload（data.duty）跨设备同步。
+  const DUTY_KEY = 'schedule_duty_cfg';
+  const DUTY_VER = 2; // v2：修正午餐值周默认数据（周二~周四）；版本不符的旧存档自动回退内置默认
+
+  function getDutyRows() {
+    const saved = loadJSON(DUTY_KEY, null);
+    const rows = FIXED_ROWS.map(function (fr) { return fr.duty ? deepCopy(fr.duty) : null; });
+    if (saved && saved.ver === DUTY_VER && Array.isArray(saved.rows) && saved.rows.length === FIXED_ROWS.length) {
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i] && saved.rows[i] && typeof saved.rows[i] === 'object') rows[i] = saved.rows[i];
+      }
+    }
+    return rows;
+  }
+
+  function saveDutyRows(rows) { saveJSON(DUTY_KEY, { ver: DUTY_VER, rows: rows }); }
+
+  // 云端 duty 数组 → 本地（结构校验，非法值回退内置默认）
+  function importDutyRows(rows) {
+    if (!Array.isArray(rows) || rows.length !== FIXED_ROWS.length) return false;
+    const clean = [];
+    for (let i = 0; i < rows.length; i++) {
+      if (!FIXED_ROWS[i].duty) { clean.push(null); continue; }
+      const src = rows[i];
+      if (!src || typeof src !== 'object') { clean.push(deepCopy(FIXED_ROWS[i].duty)); continue; }
+      const d = {};
+      for (let day = 1; day <= 5; day++) {
+        const v = src[day] !== undefined ? src[day] : src[String(day)];
+        if (typeof v === 'string' && v.trim()) d[day] = v.trim().slice(0, 12);
+      }
+      clean.push(d);
+    }
+    saveDutyRows(clean);
+    return true;
+  }
+
+  // 固定行开始分钟（'9:00~9:30' → 540；'17:20' → 1040；无时间 → null）
+  function fixedStartMin(time) {
+    const hm = String(time || '').split('~')[0].split(':');
+    if (hm.length < 2) return null;
+    const h = parseInt(hm[0], 10), m = parseInt(hm[1], 10);
+    return (isNaN(h) || isNaN(m)) ? null : h * 60 + m;
   }
 
   // ==================== 数据层 ====================
@@ -198,21 +342,104 @@ const Schedule = (function () {
   // 清空「本周及以后」的周实例（应用云端模板后按新模板重建；已过去的历史周保留）
   function clearFutureWeekInstances() {
     const weeks = getWeeks();
+    const edited = getWeekEdited();
     const thisMon = weekKeyOf(0);
     let n = 0;
     Object.keys(weeks).forEach(function (k) {
-      if (k >= thisMon) { delete weeks[k]; n++; }
+      if (k >= thisMon) { delete weeks[k]; delete edited[k]; n++; }
     });
     saveJSON(WEEKS_KEY, weeks);
+    saveJSON(WEEK_EDIT_KEY, edited);
     render();
+    return n;
+  }
+
+  // ==================== 模板 → 周实例 跟随（v5.27）====================
+  // 背景：周实例是「首次访问该周时从模板拍快照」的，此后模板再改不会回灌已生成的周实例，
+  //       于是出现「模板里明明有课，本周却缺课」→ 云端提醒计划缺条目 → 当天不推送。
+  // 规则：
+  //   ① 未被手动改过的周（本周及以后）默认跟随模板；用户在某一周里增删改过，该周打标记后不再被覆盖
+  //   ② 改模板 → 立刻整周重建未标记的未来周（用户预期「改了模板就该生效」）
+  //   ③ 启动自愈 → 只对「本周」补缺失槽位（绝不删改已有课程，避免误删用户为本周做的调整）
+  function getWeekEdited() { return loadJSON(WEEK_EDIT_KEY, {}); }
+  function setWeekEdited(weekKey, on) {
+    if (!weekKey || weekKey === TEMPLATE_ID) return;
+    const m = getWeekEdited();
+    if (on) m[weekKey] = Date.now(); else delete m[weekKey];
+    saveJSON(WEEK_EDIT_KEY, m);
+  }
+  // fillOnly=true → 只填空缺槽位；false → 整周按模板重建
+  function applyTemplateToWeeks(opts) {
+    const fillOnly = !!(opts && opts.fillOnly);
+    const tpl = getTemplate();
+    const weeks = getWeeks();
+    const edited = getWeekEdited();
+    const thisMon = weekKeyOf(0);
+    let n = 0;
+    Object.keys(weeks).forEach(function (k) {
+      if (k < thisMon) return;      // 历史周不动
+      if (edited[k]) return;        // 手动改过的周保留
+      if (fillOnly) {
+        Object.keys(tpl).forEach(function (slot) {
+          if (!weeks[k][slot] || !weeks[k][slot].name) { weeks[k][slot] = deepCopy(tpl[slot]); n++; }
+        });
+      } else {
+        weeks[k] = deepCopy(tpl); n++;
+      }
+    });
+    if (n) {
+      saveJSON(WEEKS_KEY, weeks);
+      render();
+      cloudQueueSoon();
+    }
+    return n;
+  }
+  // 启动自愈：仅本周，只补空缺（历史遗留的「本周缺课」自动修复并重报云端计划）
+  function selfHealThisWeek() {
+    const wk = weekKeyOf(0);
+    const weeks = getWeeks();
+    if (!weeks[wk]) return 0;       // 本周还没实例 → 下次访问自然按模板生成
+    if (getWeekEdited()[wk]) return 0;
+    const tpl = getTemplate();
+    let n = 0;
+    Object.keys(tpl).forEach(function (slot) {
+      if (!weeks[wk][slot] || !weeks[wk][slot].name) { weeks[wk][slot] = deepCopy(tpl[slot]); n++; }
+    });
+    if (n) {
+      saveJSON(WEEKS_KEY, weeks);
+      render();
+      cloudQueueSoon();
+    }
+    return n;
+  }
+  // 该周实例相对模板缺了多少节（用于界面提示：模板有课但本周没排入）
+  // 只统计「本周该上的课」：奇偶不匹配的模板课不算缺（本来就不该排入这周）
+  function weekMissingCount(weekKey) {
+    if (weekKey === TEMPLATE_ID) return 0;
+    const weeks = getWeeks();
+    const data = weeks[weekKey];
+    if (!data) return 0;
+    const tpl = getTemplate();
+    const parity = weekParity(weekKey);
+    let n = 0;
+    Object.keys(tpl).forEach(function (slot) {
+      if (tpl[slot] && tpl[slot].name && courseActiveThisWeek(tpl[slot], parity) && (!data[slot] || !data[slot].name)) n++;
+    });
     return n;
   }
 
   // 读写入口（统一区分模板 / 周实例）
   function getData(weekKey) { return weekKey === TEMPLATE_ID ? getTemplate() : getWeekData(weekKey); }
   function saveData(weekKey, data) {
-    if (weekKey === TEMPLATE_ID) { saveTemplate(data); markTemplateDirty(); }
-    else saveWeek(weekKey, data);
+    if (weekKey === TEMPLATE_ID) {
+      saveTemplate(data);
+      markTemplateDirty();
+      // 模板变更 → 本周及以后「未被手动改过」的周实例跟随重建（否则本周仍缺课，云端提醒照旧缺计划）
+      applyTemplateToWeeks();
+    } else {
+      saveWeek(weekKey, data);
+      setWeekEdited(weekKey, true); // 该周已手动调整 → 之后不再被模板覆盖
+    }
     cloudQueueSoon(); // 课表变化 → 重新同步云端提醒计划
   }
 
@@ -221,6 +448,7 @@ const Schedule = (function () {
     const label = isThisWeek ? '本周' : '下周';
     const ok = await showConfirmModal('重置' + label, '将' + label + '课表恢复为模板内容，' + label + '已有的调整会被覆盖。确定重置吗？');
     if (!ok) return;
+    setWeekEdited(weekKey, false); // 重置回模板 = 取消该周的「手动改过」标记，恢复自动跟随
     saveWeek(weekKey, deepCopy(getTemplate()));
     cloudQueueSoon(); // 重置后课程变化 → 重新同步云端提醒计划（否则被重置掉的课程旧提醒仍会照发）
     showToast(label + '已重置为模板');
@@ -230,8 +458,9 @@ const Schedule = (function () {
   // ==================== 渲染 ====================
 
   function render() {
-    // 渲染前先修复历史数据（缺机房 / 周三第5节默认值），幂等
+    // 渲染前先修复历史数据（缺机房 / 周三第5节默认值 / 单双周前缀），幂等
     migrateRoomData();
+    migrateWeeksPrefix();
     const content = document.getElementById('schContent');
     if (!content) return;
 
@@ -240,14 +469,16 @@ const Schedule = (function () {
     if (tip) {
       tip.textContent = templateMode
         ? '模板模式：编辑的内容将作为每周课表的初始模板'
-        : '长按课程拖到空格子即可换课（支持跨周）；点击空格子添加课程，点击课程可删除';
+        : '长按拖动到任意格子即可调整/互换（支持跨周）；点击空格子添加课程，点击课程可编辑';
     }
 
     if (templateMode) {
       content.appendChild(buildWeekTable(TEMPLATE_ID, '模板课表', '每周以此初始化', false));
+      content.appendChild(buildFullTemplateBar());
     } else {
-      content.appendChild(buildWeekTable(weekKeyOf(0), '本周', weekRangeText(weekKeyOf(0)), true));
-      content.appendChild(buildWeekTable(weekKeyOf(1), '下周', weekRangeText(weekKeyOf(1)), true));
+      const wk0 = weekKeyOf(0), wk1 = weekKeyOf(1);
+      content.appendChild(buildWeekTable(wk0, '本周（' + parityText(weekParity(wk0)) + '）', weekRangeText(wk0), true));
+      content.appendChild(buildWeekTable(wk1, '下周（' + parityText(weekParity(wk1)) + '）', weekRangeText(wk1), true));
     }
 
     // 同步模板按钮状态
@@ -285,6 +516,15 @@ const Schedule = (function () {
     }
     box.appendChild(head);
 
+    // 与模板不一致提示：模板里有课但这一周没排入 → 云端提醒会缺计划（用户视角＝当天不推送）
+    const miss = weekMissingCount(weekKey);
+    if (miss > 0) {
+      const warn = document.createElement('div');
+      warn.className = 'sch-week-warn';
+      warn.textContent = '⚠️ 与模板不一致：模板里有 ' + miss + ' 节课未排入本周，点「重置」可补齐';
+      box.appendChild(warn);
+    }
+
     // 表格（grid）
     const table = document.createElement('div');
     table.className = 'sch-table';
@@ -319,12 +559,49 @@ const Schedule = (function () {
         table.appendChild(buildCell(weekKey, slot, data[slot]));
       }
 
-      FIXED_ROWS.forEach(function (fr) {
+      FIXED_ROWS.forEach(function (fr, ri) {
         if (fr.after !== per.p) return;
-        const row = document.createElement('div');
-        row.className = 'sch-fixed-row';
-        row.textContent = fr.time + '  ' + fr.label;
-        table.appendChild(row);
+        if (fr.duty) {
+          // 值周行：时间/名称列 + 5 天各自安排（可拖动/点击编辑；单双周不匹配 → 整格不展示）
+          const isTpl = (weekKey === TEMPLATE_ID);
+          const wkParity = isTpl ? null : weekParity(weekKey);
+          const dutyRows = getDutyRows();
+          const lc = document.createElement('div');
+          lc.className = 'sch-time-cell';
+          const lb = document.createElement('b');
+          lb.textContent = fr.label;
+          const ls = document.createElement('span');
+          ls.textContent = fr.time;
+          lc.appendChild(lb);
+          lc.appendChild(ls);
+          table.appendChild(lc);
+          for (let d = 1; d <= 5; d++) {
+            const cell = document.createElement('div');
+            cell.className = 'sch-duty-cell';
+            cell.dataset.week = weekKey;
+            cell.dataset.duty = ri + ':' + d;
+            const txt = (dutyRows[ri] && dutyRows[ri][d]) || '';
+            const dp = dutyParityOf(txt);
+            if (txt && !isTpl && dp && dp !== wkParity) {
+              // 该周没有这项值周 → 完全不展示（仍占位防误拖，点击可查看/编辑）
+              cell.classList.add('sch-duty-hidden');
+              cell.dataset.occupied = '1';
+              cell.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
+            } else if (txt) {
+              cell.textContent = txt;
+              cell.dataset.occupied = '1';
+              bindDutyDrag(cell, ri, d);
+            } else {
+              cell.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
+            }
+            table.appendChild(cell);
+          }
+        } else {
+          const row = document.createElement('div');
+          row.className = 'sch-fixed-row';
+          row.textContent = fr.time + '  ' + fr.label;
+          table.appendChild(row);
+        }
       });
     });
 
@@ -351,6 +628,20 @@ const Schedule = (function () {
     el.className = 'sch-course';
     el.dataset.week = weekKey;
     el.dataset.slot = slot;
+
+    // 单双周课：模板视图全显带「单/双」角标；周视图不匹配奇偶 → 完全不展示（点击仍可编辑，防误建覆盖）
+    const isTpl = (weekKey === TEMPLATE_ID);
+    const active = isTpl || courseActiveThisWeek(course, weekParity(weekKey));
+    if (course.weeks === 'odd' || course.weeks === 'even') {
+      if (!active) {
+        el.classList.add('sch-course-hidden');
+      } else {
+        const tag = document.createElement('span');
+        tag.className = 'sch-course-weeks sch-course-weeks-on';
+        tag.textContent = course.weeks === 'odd' ? '单' : '双';
+        el.appendChild(tag);
+      }
+    }
 
     const name = document.createElement('span');
     name.className = 'sch-course-name';
@@ -386,6 +677,7 @@ const Schedule = (function () {
       nameInput.value = course.name || '';
       fillClassOptions(course.cls || '');
       fillRoomOptions(course.room || '');
+      setWeeksSelect(course.weeks);
       delRow.style.display = 'block';
       saveBtn.textContent = '保存';
     } else {
@@ -394,6 +686,7 @@ const Schedule = (function () {
       nameInput.value = last.name || '';
       fillClassOptions(last.cls || '');
       fillRoomOptions(last.room || '');
+      setWeeksSelect('');
       delRow.style.display = 'none';
       saveBtn.textContent = '添加';
     }
@@ -506,9 +799,19 @@ const Schedule = (function () {
   }
 
   function slotLabelOf(slot) {
-    const m = slot.match(/^d(\d)_p(\d)$/);
+    if (/^duty:(\d+):(\d+)$/.test(slot)) {
+      const m = slot.match(/^duty:(\d+):(\d+)$/);
+      return DAY_NAMES[parseInt(m[2], 10) - 1] || slot; // 横幅显示「课程名 · 周X」，行名已在 course.name 里
+    }
+    const m = slot.match(/^d(\d)_p(10|[1-9])$/);
     if (!m) return slot;
     return DAY_NAMES[parseInt(m[1], 10) - 1] + ' ' + (PERIODS[parseInt(m[2], 10) - 1] || {}).label;
+  }
+
+  // 课程弹窗「单双周」下拉（'' = 每周）
+  function setWeeksSelect(v) {
+    const sel = document.getElementById('schCourseWeeks');
+    if (sel) sel.value = (v === 'odd' || v === 'even') ? v : '';
   }
 
   function closeModal() {
@@ -528,7 +831,10 @@ const Schedule = (function () {
     if (!name) { showToast('请输入课程名称'); return; }
 
     const data = getData(modalCtx.weekKey);
+    const weeksSel = document.getElementById('schCourseWeeks');
+    const weeksVal = (weeksSel && (weeksSel.value === 'odd' || weeksSel.value === 'even')) ? weeksSel.value : '';
     data[modalCtx.slot] = { name: name, cls: cls, room: room };
+    if (weeksVal) data[modalCtx.slot].weeks = weeksVal;
     saveData(modalCtx.weekKey, data);
     saveJSON(LAST_INPUT_KEY, { name: name, cls: cls, room: room });
     applyRemindOverrideFromModal();
@@ -556,6 +862,34 @@ const Schedule = (function () {
   function toggleTemplateMode() {
     templateMode = !templateMode;
     render();
+  }
+
+  // ==================== 套用内置完整课表 ====================
+  // 场景：完整课表（16 节信息课 + 延时段）内置在代码里（DEFAULT_TEMPLATE），
+  //       但老设备的模板存在 localStorage，不会自动跟随代码更新 → 模板模式一键套用，之后经课表云同步自动扩散到其他设备
+
+  function buildFullTemplateBar() {
+    const bar = document.createElement('div');
+    bar.className = 'sch-fulltpl-bar';
+    const btn = document.createElement('button');
+    btn.className = 'sch-fulltpl-btn';
+    btn.textContent = '📋 套用完整课表（信息课 + 延时段）';
+    btn.onclick = applyFullTemplate;
+    bar.appendChild(btn);
+    return bar;
+  }
+
+  function applyFullTemplate() {
+    showConfirmModal('套用完整课表', '将用内置完整课表覆盖当前模板（16 节信息课 + 延时段），未来周实例按新模板重建；值周安排也会恢复为内置默认。\n\n当前模板的手动调整会被覆盖，确定继续吗？').then(function (ok) {
+      if (!ok) return;
+      saveTemplate(deepCopy(DEFAULT_TEMPLATE));
+      localStorage.removeItem(DUTY_KEY); // 值周恢复内置默认
+      markTemplateDirty();
+      applyTemplateToWeeks();
+      cloudQueueSoon();
+      showToast('已套用完整课表，云端将同步到其他设备');
+      render();
+    });
   }
 
   // ==================== 拖拽 ====================
@@ -645,21 +979,31 @@ const Schedule = (function () {
   }
 
   function beginDrag(el, weekKey, slot, x, y) {
-    const course = el.querySelector('.sch-course-name');
-    const cls = el.querySelector('.sch-course-cls');
+    const kind = /^duty:/.test(slot) ? 'duty' : 'course';
+    let ghostText = '';
+    let ghostSub = '';
+    if (kind === 'duty') {
+      ghostText = el.textContent || '';
+    } else {
+      const course = el.querySelector('.sch-course-name');
+      const cls = el.querySelector('.sch-course-cls');
+      ghostText = course ? course.textContent : '';
+      ghostSub = cls && cls.textContent ? cls.textContent : '';
+    }
 
     const ghost = document.createElement('div');
     ghost.className = 'sch-ghost';
-    ghost.textContent = course ? course.textContent : '';
-    if (cls && cls.textContent) {
+    ghost.textContent = ghostText;
+    if (ghostSub) {
       const sub = document.createElement('span');
       sub.className = 'sch-ghost-sub';
-      sub.textContent = cls.textContent;
+      sub.textContent = ghostSub;
       ghost.appendChild(sub);
     }
     document.body.appendChild(ghost);
 
     drag = {
+      kind: kind,
       fromWeek: weekKey,
       fromSlot: slot,
       sourceEl: el,
@@ -668,6 +1012,7 @@ const Schedule = (function () {
     };
     el.classList.add('dragging');
     document.body.classList.add('sch-dragging');
+    if (kind === 'duty') document.body.classList.add('sch-drag-duty');
   }
 
   function dragMove(x, y) {
@@ -686,10 +1031,18 @@ const Schedule = (function () {
     const el = document.elementFromPoint(x, y);
     drag.ghost.style.display = prevDisplay;
 
-    const cell = el ? el.closest('.sch-cell') : null;
     let valid = null;
-    if (cell && cell.classList.contains('sch-empty')) {
-      valid = cell;
+    if (drag.kind === 'duty') {
+      // 值周拖拽：任意值周格都可落（有空安排的格子 → 移入；已有安排的 → 互换）
+      const cell = el ? el.closest('.sch-duty-cell') : null;
+      if (cell && cell.dataset.duty) {
+        const ri = parseInt(cell.dataset.duty.split(':')[0], 10);
+        if (FIXED_ROWS[ri] && FIXED_ROWS[ri].duty) valid = cell;
+      }
+    } else {
+      // 课程拖拽：任意可排课格都可落（空格 → 移入；已有课程 → 互换）
+      const cell = el ? el.closest('.sch-cell') : null;
+      if (cell) valid = cell;
     }
 
     if (drag.target && drag.target !== valid) {
@@ -733,31 +1086,93 @@ const Schedule = (function () {
     document.body.classList.remove('sch-dragging');
 
     if (target) {
+      const kind = drag.kind;
       const toWeek = target.dataset.week;
-      const toSlot = target.dataset.slot;
+      const toSlot = kind === 'duty' ? target.dataset.duty : target.dataset.slot;
       drag = null;
-      moveCourse(fromWeek, fromSlot, toWeek, toSlot);
+      document.body.classList.remove('sch-drag-duty');
+      if (kind === 'duty') moveDuty(fromSlot, toSlot);
+      else moveCourse(fromWeek, fromSlot, toWeek, toSlot);
     } else {
       drag = null;
+      document.body.classList.remove('sch-drag-duty');
       render(); // 回弹：还原原卡片透明度
     }
+  }
+
+  // ==================== 值周拖拽 / 编辑 ====================
+
+  // 值周拖放：fromSlot = 'duty:行:天'，toEnc = '行:天'；值周为全局配置（不分周）
+  function moveDuty(fromSlot, toEnc) {
+    const fp = String(fromSlot).split(':');
+    const tp = String(toEnc).split(':');
+    const fromRow = parseInt(fp[1], 10), fromDay = parseInt(fp[2], 10);
+    const toRow = parseInt(tp[0], 10), toDay = parseInt(tp[1], 10);
+    if (isNaN(fromRow) || isNaN(toRow) || !FIXED_ROWS[toRow] || !FIXED_ROWS[toRow].duty) { render(); return; }
+    if (fromRow === toRow && fromDay === toDay) { render(); return; }
+    const rows = getDutyRows();
+    const txt = rows[fromRow] && rows[fromRow][fromDay];
+    if (!txt) { render(); return; }
+    // 目标已有安排 → 互换；空格 → 移入
+    if (!rows[toRow]) rows[toRow] = {};
+    const other = rows[toRow][toDay] || '';
+    if (other) rows[fromRow][fromDay] = other;
+    else delete rows[fromRow][fromDay];
+    rows[toRow][toDay] = txt;
+    saveDutyRows(rows);
+    dutyChanged();
+    showToast('已调整：' + FIXED_ROWS[toRow].label + ' ' + DAY_NAMES[toDay - 1] + (other ? '（互换）' : ''));
+    render();
+  }
+
+  // 轻点值周格 → 编辑（prompt：改文本 / 加「单：」「双：」前缀 / 留空删除）
+  function editDuty(rowIdx, day) {
+    const fr = FIXED_ROWS[rowIdx];
+    if (!fr || !fr.duty) return;
+    const rows = getDutyRows();
+    const cur = (rows[rowIdx] && rows[rowIdx][day]) || '';
+    const tip = fr.label + '（' + DAY_NAMES[day - 1] + ' ' + fr.time + '）\n' +
+      '输入值周安排；前缀「单：」= 仅单周、「双：」= 仅双周；留空 = 删除';
+    const v = prompt(tip, cur);
+    if (v === null) return; // 取消
+    const rows2 = getDutyRows();
+    if (!rows2[rowIdx]) rows2[rowIdx] = {};
+    const t = String(v).trim().slice(0, 12);
+    if (t) rows2[rowIdx][day] = t; else delete rows2[rowIdx][day];
+    saveDutyRows(rows2);
+    dutyChanged();
+    render();
+  }
+
+  // 值周配置变化 → 跨设备同步 + 云端提醒计划重报
+  function dutyChanged() {
+    markTemplateDirty(); // 触发 accounting.js 3s 防抖上传（payload 含 duty）
+    cloudQueueSoon();
+  }
+
+  function bindDutyDrag(el, rowIdx, day) {
+    const slot = 'duty:' + rowIdx + ':' + day;
+    el.addEventListener('mousedown', function (e) { mouseDown(e, el, weekKeyOf(0), slot); });
+    el.addEventListener('touchstart', function (e) { touchStart(e, el, weekKeyOf(0), slot); }, { passive: false });
+    el.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(rowIdx, day); });
   }
 
   function moveCourse(fromWeek, fromSlot, toWeek, toSlot) {
     const src = getData(fromWeek);
     const course = src[fromSlot];
     if (!course) { render(); return; }
+    if (fromWeek === toWeek && fromSlot === toSlot) { render(); return; }
 
     // 同一周/模板内移动时必须复用同一对象，避免两次读取互相覆盖
     const dst = (fromWeek === toWeek) ? src : getData(toWeek);
-    if (dst[toSlot]) { showToast('目标格子已有课程'); render(); return; }
-    if (fromWeek === toWeek && fromSlot === toSlot) { render(); return; }
-
-    delete src[fromSlot];
+    // 目标格已有课程 → 互换（拖动任意格均可落）；空格 → 移入
+    const other = dst[toSlot] || null;
+    if (other) src[fromSlot] = other;
+    else delete src[fromSlot];
     dst[toSlot] = course;
     saveData(fromWeek, src);
     if (fromWeek !== toWeek) saveData(toWeek, dst);
-    showToast('已调整：' + slotLabelOf(toSlot));
+    showToast('已调整：' + slotLabelOf(toSlot) + (other ? '（与原课程互换）' : ''));
     render();
   }
 
@@ -1012,15 +1427,15 @@ const Schedule = (function () {
 
   // slot 'dN_pM' → { day, period }
   function periodOf(slot) {
-    const m = slot.match(/^d(\d)_p(\d)$/);
+    const m = slot.match(/^d(\d)_p(10|[1-9])$/);
     if (!m) return null;
     return { day: parseInt(m[1], 10), period: parseInt(m[2], 10) };
   }
 
-  // 节次开始分钟（0 点起算），如 '8:20' → 500
+  // 节次开始分钟（0 点起算），如 '8:20' → 500；无时间（延时一）→ null = 不提醒
   function periodStartMin(period) {
     const per = PERIODS[period - 1];
-    if (!per) return null;
+    if (!per || !per.time) return null;
     const hm = per.time.split('~')[0].split(':');
     return parseInt(hm[0], 10) * 60 + parseInt(hm[1], 10);
   }
@@ -1030,17 +1445,20 @@ const Schedule = (function () {
     return new Date(n.getFullYear(), n.getMonth(), n.getDate(), 0, minuteOfDay, 0, 0).getTime();
   }
 
-  // 今天需要提醒的课（周末/无课/已关闭提醒的跳过）
+  // 今天需要提醒的课/值周（周末/无课/单双周不匹配/已关闭提醒的跳过）
   function todayRemindItems() {
     const n = new Date();
     const dow = n.getDay(); // 0=周日
     if (dow === 0 || dow > 5) return [];
-    const data = getWeekData(weekKeyOf(0)); // 本周实例（不存在则自动从模板初始化）
+    const wk = weekKeyOf(0);
+    const parity = weekParity(wk);
+    const data = getWeekData(wk); // 本周实例（不存在则自动从模板初始化）
     const items = [];
     Object.keys(data).forEach(function (slot) {
       const m = periodOf(slot);
       const course = data[slot];
       if (!m || m.day !== dow || !course || !course.name) return;
+      if (!courseActiveThisWeek(course, parity)) return; // 单双周不匹配 → 今天不上
       const startMin = periodStartMin(m.period);
       if (startMin === null) return;
       const lead = leadMinutesOf(slot);
@@ -1052,7 +1470,34 @@ const Schedule = (function () {
         remindMs: dateMsOf(startMin) - lead * 60000
       });
     });
+    // 值周提醒：与课程同规则（默认提前量 + 单双周过滤）
+    collectDutyItems(dow, parity, function (slot, label, startMin, lead) {
+      items.push({
+        slot: slot,
+        course: { name: label },
+        startMs: dateMsOf(startMin),
+        remindMs: dateMsOf(startMin) - lead * 60000
+      });
+    });
     return items;
+  }
+
+  // 遍历某天需提醒的值周条目（cb = (slot, 行label, 开始分钟, 提前量)）
+  function collectDutyItems(dow, parity, cb) {
+    const rows = getDutyRows();
+    FIXED_ROWS.forEach(function (fr, ri) {
+      if (!fr.duty) return;
+      const startMin = fixedStartMin(fr.time);
+      if (startMin === null) return;
+      const slot = 'duty:' + ri + ':' + dow;
+      const txt = rows[ri] && rows[ri][dow];
+      if (!txt) return;
+      const dp = dutyParityOf(txt);
+      if (dp && dp !== parity) return; // 单双周不匹配 → 今天没有这项值周
+      const lead = leadMinutesOf(slot); // 值周无独立每课配置 → 默认提前量
+      if (lead === null) return;
+      cb(slot, fr.label, startMin, lead);
+    });
   }
 
   function runReminderCheck() {
@@ -1226,6 +1671,23 @@ const Schedule = (function () {
       });
       leadSel.value = String(cfg.defaultLead || 0);
     }
+    // 单双周锚点：选项随当前日期生成（本周/下周），提示当前设置
+    const anchorSel = document.getElementById('schOddAnchor');
+    const anchorHint = document.getElementById('schOddAnchorHint');
+    if (anchorSel) {
+      const wk0 = weekKeyOf(0), wk1 = weekKeyOf(1);
+      const cur = getOddAnchor();
+      anchorSel.innerHTML = '';
+      [['0', '本周（' + weekRangeText(wk0) + '）为单周'],
+       ['1', '下周（' + weekRangeText(wk1) + '）为单周']].forEach(function (o) {
+        const op = document.createElement('option');
+        op.value = o[0];
+        op.textContent = o[1];
+        anchorSel.appendChild(op);
+      });
+      anchorSel.value = (cur === wk1) ? '1' : '0';
+      if (anchorHint) anchorHint.textContent = '当前：' + weekRangeText(cur) + ' 为单周，之后单/双每两周轮换';
+    }
     loadWxCfgIntoUI();
     document.getElementById('schRemindModal').classList.add('active');
     cloudStatusRefresh();
@@ -1240,6 +1702,9 @@ const Schedule = (function () {
     if (on) cfg.enabled = on.classList.contains('on');
     if (leadSel) cfg.defaultLead = parseInt(leadSel.value, 10) || 0;
     saveRemindCfg(cfg);
+    // 1.5) 单双周锚点（变化 → 重渲染 + 云端计划重算，含在下方 syncCloudPlan(true)）
+    const anchorSel = document.getElementById('schOddAnchor');
+    if (anchorSel) setOddAnchor(anchorSel.value === '1' ? weekKeyOf(1) : weekKeyOf(0), false);
     // 2) 推送通道（Token 必填校验失败则停留当前页继续编辑）
     if (!saveWxConfigFromForm()) return;
     // 3) 立即上报一次（不等 3s 防抖），云端马上按新设置执行
@@ -1342,12 +1807,15 @@ const Schedule = (function () {
       if (dow === 0 || dow > 5) continue;
       const mon = new Date(d);
       mon.setDate(d.getDate() - (dow - 1));
-      const data = getWeekData(fmtDate(mon)); // 懒初始化周实例
+      const wk = fmtDate(mon);
+      const parity = weekParity(wk);
+      const data = getWeekData(wk); // 懒初始化周实例
       const dateStr = fmtDate(d);
       for (let p = 1; p <= PERIODS.length; p++) {
         const slot = 'd' + dow + '_p' + p;
         const course = data[slot];
         if (!course || !course.name) continue;
+        if (!courseActiveThisWeek(course, parity)) continue; // 单双周不匹配 → 该周不上
         const startMin = periodStartMin(p);
         const lead = leadMinutesOf(slot);
         if (startMin === null || lead === null) continue;
@@ -1360,14 +1828,32 @@ const Schedule = (function () {
         // 课程名不参与推送文案：课表通常整学期单一课程，标题保留 时间/班级/机房 即可
         const clsText = notifDigits(clsShort(course.cls));
         const whoText = [clsText, room].filter(Boolean).join(' · '); // 班级 · 机房
+        const weeksTag = (course.weeks === 'odd' || course.weeks === 'even') ? '，' + parityText(parity) : '';
         plans.push({
           ts: startMs - lead * 60000,
           // 标题 = 极简一行「班级 机房 上课时刻」（如「3.9班 机房1 10:20」），保证通知栏完整展示不被截断
           title: [clsText, room, hmStart].filter(Boolean).join(' '),
           // 正文两行：第 1 行 = 何时（日期 星期 节次 上课时刻 + 提前量）；第 2 行 = 班级 · 机房（完整详情）
-          body: dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + ' ' + hmStart + ' 上课（提前 ' + leadText + '）\n' + whoText
+          body: dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + ' ' + hmStart + ' 上课（提前 ' + leadText + weeksTag + '）\n' + whoText
         });
       }
+      // 值周提醒：固定行时间 + 默认提前量 + 单双周过滤（与课程同规则）
+      collectDutyItems(dow, parity, function (slot, label, startMin, lead) {
+        const ri = parseInt(slot.split(':')[1], 10);
+        const fr = FIXED_ROWS[ri];
+        const hmStart = String(fr.time).split('~')[0];
+        const leadText = lead >= 60 ? (Math.floor(lead / 60) + ' 小时' + (lead % 60 ? ' ' + (lead % 60) + ' 分钟' : '')) : (lead + ' 分钟');
+        const txt = (getDutyRows()[ri] || {})[dow] || '';
+        const dp = dutyParityOf(txt);
+        const weeksTag = dp ? '，' + parityText(dp) : '';
+        const dm = dateStr.split('-');
+        const dutyDateText = parseInt(dm[1], 10) + '月' + parseInt(dm[2], 10) + '日';
+        plans.push({
+          ts: new Date(dateStr + 'T00:00:00').getTime() + startMin * 60000 - lead * 60000,
+          title: notifDigits(label) + ' ' + hmStart,
+          body: dutyDateText + ' ' + DAY_NAMES[dow - 1] + ' ' + hmStart + ' ' + label + '（提前 ' + leadText + weeksTag + '）\n' + notifDigits(dutyPlainOf(txt))
+        });
+      });
     }
     return plans;
   }
@@ -1572,7 +2058,7 @@ const Schedule = (function () {
     let n = 0;
     Object.keys(tpl).forEach(function (slot) {
       const c = tpl[slot];
-      if (c && typeof c === 'object' && c.name && /^d[1-5]_p[1-7]$/.test(slot)) n++;
+      if (c && typeof c === 'object' && c.name && /^d[1-5]_p(10|[1-9])$/.test(slot)) n++;
     });
     if (n === 0) return false;
     // 直写 localStorage：只覆盖模板，已生成的周实例保持不被覆盖（沿用懒初始化语义）
@@ -1584,12 +2070,14 @@ const Schedule = (function () {
   // 清空所有周实例（「以云端为准」恢复课表时用）：下次渲染按模板重新懒生成
   function clearWeekInstances() {
     localStorage.removeItem(WEEKS_KEY);
+    localStorage.removeItem(WEEK_EDIT_KEY);
     render();
   }
 
   return {
     render: render,
     toggleTemplateMode: toggleTemplateMode,
+    applyFullTemplate: applyFullTemplate,
     openModal: openModal,
     closeModal: closeModal,
     saveCourse: saveCourse,
@@ -1623,6 +2111,18 @@ const Schedule = (function () {
     importTemplateData: importTemplateData,
     clearWeekInstances: clearWeekInstances,
     clearFutureWeekInstances: clearFutureWeekInstances,
+    // 模板 → 周实例跟随（v5.27）
+    applyTemplateToWeeks: applyTemplateToWeeks,
+    selfHealThisWeek: selfHealThisWeek,
+    weekMissingCount: weekMissingCount,
+    getWeekEdited: getWeekEdited,
+    // 单双周（v5.28）
+    getOddAnchor: getOddAnchor,
+    setOddAnchor: setOddAnchor,
+    weekParity: weekParity,
+    // 值周（v5.28：可拖动/编辑/跨设备同步）
+    getDutyRows: getDutyRows,
+    importDutyRows: importDutyRows,
     getTemplateSyncMeta: getTemplateSyncMeta,
     setTemplateSyncedAt: setTemplateSyncedAt,
     hasUnsyncedTemplate: hasUnsyncedTemplate,

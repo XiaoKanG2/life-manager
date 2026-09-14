@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.26';
+const APP_VERSION = '5.28';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -549,6 +549,11 @@ async function init() {
     if (typeof updateSchSyncBadge === 'function') updateSchSyncBadge();
     registerServiceWorker();
     requestPersistentStorage();
+    // v5.27 启动自愈：本周课表若缺模板里的课（历史遗留「模板改了但本周没变」＝云端提醒会漏计划），先补齐再上报
+    if (typeof Schedule !== 'undefined' && Schedule.selfHealThisWeek) {
+      const healed = Schedule.selfHealThisWeek();
+      if (healed > 0) showToast('已按模板补齐本周 ' + healed + ' 节课');
+    }
     // 启动课表上课提醒引擎（默认页非课表时也常驻自检）
     if (typeof Schedule !== 'undefined' && Schedule.bootReminder) Schedule.bootReminder();
     // 课表模板跨设备自动同步：启动后拉取云端，若云端更新且本机无改动则自动应用（不阻塞初始化）
@@ -2084,7 +2089,7 @@ async function schSyncPush() {
   try {
     const { error } = await client.from('sync_data').upsert({
       sync_key: schSyncRowKey(),
-      data: { template: Schedule.getTemplateData() },
+      data: { template: Schedule.getTemplateData(), oddAnchor: schAnchorSignature() },
       updated_at: new Date().toISOString()
     }, { onConflict: 'sync_key' });
     if (error) throw error;
@@ -2103,6 +2108,7 @@ async function schSyncPull() {
     const { data, error } = await client.from('sync_data').select('data, updated_at').eq('sync_key', schSyncRowKey()).single();
     if (error && error.code !== 'PGRST116') throw error;
     if (!data || !data.data || !Schedule.importTemplateData(data.data.template)) { showToast('云端暂无课表数据'); return; }
+    applySchCloudAnchor(data.data); // 单双周锚点随课表一起应用
     // 模板更新后重建「本周及以后」的周实例，否则已初始化过的周仍显示旧课（用户视角＝没同步）
     if (Schedule.clearFutureWeekInstances) Schedule.clearFutureWeekInstances();
     if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
@@ -2124,6 +2130,7 @@ async function schSyncForcePull() {
     if (error && error.code !== 'PGRST116') throw error;
     if (!data || !data.data || !data.data.template) { showToast('云端暂无课表数据'); return; }
     if (!Schedule.importTemplateData(data.data.template)) { showToast('云端课表数据格式无效', 'error'); return; }
+    applySchCloudAnchor(data.data); // 单双周锚点随课表一起应用
     if (Schedule.clearWeekInstances) Schedule.clearWeekInstances(); // 清空周实例 → 重新按云端模板懒生成
     if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
     showToast('已从云端完全恢复课表 ✅');
@@ -2134,11 +2141,40 @@ async function schSyncForcePull() {
 function schTemplateSignature(t) {
   if (!t || typeof t !== 'object') return '';
   return Object.keys(t).sort()
-    .filter(k => /^d[1-5]_p[1-7]$/.test(k))
+    .filter(k => /^d[1-5]_p(10|[1-9])$/.test(k))
     .map(k => {
       const c = t[k] || {};
-      return k + ':' + (c.name || '') + '|' + (c.cls || '') + '|' + (c.room || '');
+      return k + ':' + (c.name || '') + '|' + (c.cls || '') + '|' + (c.room || '') + '|' + (c.weeks || '');
     }).join(';');
+}
+
+// —— 单双周锚点签名（随模板一起跨设备同步，v5.28） ——
+function schAnchorSignature() {
+  try { return (typeof Schedule !== 'undefined' && Schedule.getOddAnchor) ? Schedule.getOddAnchor() : ''; }
+  catch (e) { return ''; }
+}
+
+// —— 值周配置（随模板 payload 一起跨设备同步，v5.28） ——
+function schDutyPayload() {
+  try { return (typeof Schedule !== 'undefined' && Schedule.getDutyRows) ? Schedule.getDutyRows() : null; }
+  catch (e) { return null; }
+}
+function schDutySigEqual(cloudDuty) {
+  if (!Array.isArray(cloudDuty)) return true; // 云端无值周数据（旧版本）→ 不比较，保留本地
+  try {
+    return JSON.stringify(cloudDuty) === JSON.stringify(Schedule.getDutyRows ? Schedule.getDutyRows() : null);
+  } catch (e) { return true; }
+}
+
+// 云端 data 对象 → { template, oddAnchor, duty }（锚点与值周随课表一起应用）
+function applySchCloudAnchor(cloudData) {
+  if (!cloudData || typeof Schedule === 'undefined') return;
+  if (cloudData.oddAnchor && Schedule.setOddAnchor && cloudData.oddAnchor !== Schedule.getOddAnchor()) {
+    Schedule.setOddAnchor(cloudData.oddAnchor, false); // 静默应用（拉取流程里统一重渲染/重报）
+  }
+  if (Array.isArray(cloudData.duty) && Schedule.importDutyRows) {
+    Schedule.importDutyRows(cloudData.duty);
+  }
 }
 
 // ==================== 课表模板自动同步 ====================
@@ -2159,7 +2195,7 @@ async function schSyncPushSilent() {
   try {
     const { error } = await client.from('sync_data').upsert({
       sync_key: schSyncRowKey(),
-      data: { template: Schedule.getTemplateData() },
+      data: { template: Schedule.getTemplateData(), oddAnchor: schAnchorSignature(), duty: schDutyPayload() },
       updated_at: new Date().toISOString()
     }, { onConflict: 'sync_key' });
     if (error) throw error;
@@ -2177,11 +2213,14 @@ async function schSyncAutoPull() {
     if (error && error.code !== 'PGRST116') throw error;
     if (!data || !data.data || !data.data.template) return; // 云端尚无课表（本机首次配置）→ 由本机上传建立
     const cloudTpl = data.data.template;
-    if (schTemplateSignature(cloudTpl) === schTemplateSignature(Schedule.getTemplateData())) {
+    const tplSame = schTemplateSignature(cloudTpl) === schTemplateSignature(Schedule.getTemplateData())
+      && schDutySigEqual(data.data.duty); // 值周配置也算模板内容（仅值周变化也会触发拉取）
+    const anchorSame = !data.data.oddAnchor || data.data.oddAnchor === schAnchorSignature();
+    if (tplSame && anchorSame) {
       if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now()); // 已一致 → 对齐时间戳
       return;
     }
-    if (Schedule.hasUnsyncedTemplate && Schedule.hasUnsyncedTemplate()) {
+    if (!tplSame && Schedule.hasUnsyncedTemplate && Schedule.hasUnsyncedTemplate()) {
       showToast('云端与本机课表都有修改，请在「课表同步」中手动选择上传或下载', 'error');
       return;
     }
@@ -2189,6 +2228,7 @@ async function schSyncAutoPull() {
     let ok = false;
     try {
       ok = Schedule.importTemplateData(cloudTpl);
+      applySchCloudAnchor(data.data); // 单双周锚点跟随云端
       if (ok && Schedule.clearFutureWeekInstances) Schedule.clearFutureWeekInstances();
     } finally { _schApplyingCloud = false; }
     if (ok) {

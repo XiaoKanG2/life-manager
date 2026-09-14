@@ -38,7 +38,12 @@ const SNAP_KEEP = 3;                // 保留快照份数
 const BOOT_ID = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 const SNAP_PATH = path.join(DATA_DIR, SNAP_PREFIX + BOOT_ID + '.json');
 const TICK_MS = 20000;          // 调度精度 20s
-const FIRE_WINDOW_MS = 10 * 60000; // 到点后 10 分钟内补发，更久则丢弃
+// 补发窗口：沙箱空闲约 5 分钟即被挂起（进程冻结、tick 停摆），唤醒后补扫；
+// 到点后 10 分钟内补发，更久则丢弃——课已上了一半再补发没有意义。
+// 迟到 >5 分钟的推送会在标题前加「[补]」以便区分。
+// 注意：窗口收窄后，避免「整天没提醒」只能靠外部保活（每 1~5 分钟 GET /api/health）。
+const FIRE_WINDOW_MS = 10 * 60000;
+const LATE_TAG_MS = 5 * 60000;  // 超过该延迟视为补发，标题加 [补] 前缀
 const SENT_KEEP = 50;           // 每终端保留的已发送记录条数（诊断延迟用，防止 plans.json 无限增长）
 
 // ==================== 配置 ====================
@@ -397,6 +402,10 @@ function processDue(now) {
       const age = now - p.ts;
       if (!p.sentAt && age >= 0 && age <= FIRE_WINDOW_MS) {
         p.sentAt = now;
+        // 明显迟到（服务被挂起后唤醒补扫）→ 标题加 [补]，避免用户误以为是准点提醒
+        if (age > LATE_TAG_MS && p.title && p.title.indexOf('[补]') !== 0) {
+          p.title = ('[补] ' + p.title).slice(0, 60);
+        }
         firePush(p); // 异步发送，不阻塞调度
         changed = true;
       }
@@ -590,6 +599,7 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, {
       ok: true,
       tickMs: TICK_MS,
+      fireWindowMs: FIRE_WINDOW_MS,
       plans: totalPending(),
       savedAt: store.savedAt || 0,
       loadedFrom: loadInfo ? loadInfo.file : null,

@@ -33,6 +33,17 @@
 }
 .sch-week-reset:active { background: var(--primary); color: #fff; }
 
+/* 与模板不一致提示（模板有课但本周没排入 → 云端提醒会漏计划） */
+.sch-week-warn {
+    font-size: 11px;
+    line-height: 1.5;
+    color: #B26A00;
+    background: rgba(255, 176, 32, 0.14);
+    border-radius: 8px;
+    padding: 5px 10px;
+    margin: 0 0 6px;
+}
+
 /* 表格：grid + 缝隙色做出表格线 */
 .sch-table {
     background: #E8ECF1;
@@ -118,6 +129,23 @@
     overflow-wrap: anywhere;
 }
 
+/* 单双周：右上角「单/双」角标；周视图不匹配奇偶的课完全隐藏（模板视图仍全显） */
+.sch-course { position: relative; }
+.sch-course-weeks {
+    position: absolute;
+    top: 1px;
+    right: 2px;
+    font-size: 8px;
+    line-height: 1.1;
+    color: #B8860B;
+    background: #FFF4D6;
+    border-radius: 4px;
+    padding: 0 3px;
+    pointer-events: none;
+}
+.sch-course-weeks-on { background: #D9ECFF; color: #2C5F8F; }
+.sch-course-hidden { display: none !important; }
+
 /* 拖拽态 */
 .sch-course.dragging { opacity: 0.3; }
 body.sch-dragging .sch-cell.sch-empty {
@@ -158,6 +186,55 @@ body.sch-dragging .sch-cell.sch-empty {
     text-align: center;
     padding: 5px 4px;
 }
+
+/* 值周固定行：与课程卡片同风格（绿色系区分），可拖动/点击编辑 */
+.sch-duty-cell {
+    background: #E8F5EC;
+    margin: 2px;
+    border-radius: 6px;
+    font-size: 9px;
+    font-weight: 600;
+    color: #2F7D4F;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 3px 1px;
+    overflow-wrap: anywhere;
+    cursor: grab;
+}
+.sch-duty-cell:empty {
+    background: #F7FAF8;
+    box-shadow: inset 0 0 0 1px #E2EDE5;
+    font-weight: 400;
+    cursor: pointer;
+}
+/* 值周：单双周不匹配 → 整格不展示（透明占位，点击可查看/编辑） */
+.sch-duty-cell.sch-duty-hidden { color: transparent; background: transparent; box-shadow: none; cursor: pointer; }
+/* 拖拽中：同类型格子全部高亮为潜在目标（空格=移入，已有内容=互换） */
+body.sch-dragging .sch-cell { background: #F4F9FE; box-shadow: inset 0 0 0 1px #C7DCF0; }
+body.sch-dragging.sch-drag-duty .sch-duty-cell { background: #F4F9FE; box-shadow: inset 0 0 0 1px #C7DCF0; }
+/* 拖值周时不高亮课程格（反之亦然） */
+body.sch-dragging.sch-drag-duty .sch-cell { background: #fff; box-shadow: none; }
+body.sch-dragging:not(.sch-drag-duty) .sch-duty-cell { background: #E8F5EC; box-shadow: none; }
+body.sch-dragging:not(.sch-drag-duty) .sch-duty-cell:empty { background: #F7FAF8; box-shadow: inset 0 0 0 1px #E2EDE5; }
+.sch-duty-cell.drop-target {
+    background: #DCEBFA !important;
+    box-shadow: inset 0 0 0 2px var(--primary) !important;
+}
+
+/* 模板模式：一键套用内置完整课表 */
+.sch-fulltpl-bar { text-align: center; padding: 2px 10px 12px; }
+.sch-fulltpl-btn {
+    font-size: 12px;
+    color: var(--primary);
+    background: rgba(74, 144, 217, 0.1);
+    border: none;
+    border-radius: 16px;
+    padding: 8px 16px;
+    cursor: pointer;
+}
+.sch-fulltpl-btn:active { background: var(--primary); color: #fff; }
 
 /* 模板切换按钮（nav-bar 右侧） */
 .nav-bar.with-actions {

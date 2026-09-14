@@ -1835,15 +1835,20 @@ const Schedule = (function () {
         const dateText = parseInt(dm[1], 10) + '月' + parseInt(dm[2], 10) + '日';
         const hmStart = PERIODS[p - 1].time.split('~')[0];
         const room = notifDigits(roomDisplay(course.room)); // 带圈数字转阿拉伯数字（通知栏不渲染 ①）
-        // 课程名不参与推送文案：课表通常整学期单一课程，标题保留 时间/班级/机房 即可
+        // 普通课标题保留 班级/机房（课表通常整学期单一课程，课程名冗余）；
+        // 延时课等无班级/机房的课程（如 作业时光/少科院/少儿编程）班级机房皆空，
+        // 若仍按 [班级,机房,时间] 拼接会只剩时间（如「16:10」）→ 此时用课程名替代，确保推送能看出是什么课
         const clsText = notifDigits(clsShort(course.cls));
-        const whoText = [clsText, room].filter(Boolean).join(' · '); // 班级 · 机房
+        const nameText = notifDigits(String(course.name || '').trim());
+        const whoParts = [clsText, room].filter(Boolean);
+        const whoText = whoParts.join(' · ') || nameText; // 班级 · 机房；皆空回退课程名
         const weeksTag = (course.weeks === 'odd' || course.weeks === 'even') ? '，' + parityText(parity) : '';
         plans.push({
           ts: startMs - lead * 60000,
           // 标题 = 极简一行「班级 机房 上课时刻」（如「3.9班 机房1 10:20」），保证通知栏完整展示不被截断
-          title: [clsText, room, hmStart].filter(Boolean).join(' '),
-          // 正文两行：第 1 行 = 何时（日期 星期 节次 上课时刻 + 提前量）；第 2 行 = 班级 · 机房（完整详情）
+          // 无班级/机房时 = 「课程名 上课时刻」（如「作业时光1(5年级10班) 16:10」）
+          title: (whoParts.length ? whoParts.concat([hmStart]) : [nameText, hmStart].filter(Boolean)).join(' '),
+          // 正文两行：第 1 行 = 何时（日期 星期 节次 上课时刻 + 提前量）；第 2 行 = 班级 · 机房 / 课程名（完整详情）
           body: dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + ' ' + hmStart + ' 上课（提前 ' + leadText + weeksTag + '）\n' + whoText
         });
       }

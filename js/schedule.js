@@ -449,6 +449,7 @@ const Schedule = (function () {
     } else {
       saveWeek(weekKey, data);
       setWeekEdited(weekKey, true); // 该周已手动调整 → 之后不再被模板覆盖
+      markTemplateDirty(); // v5.32 周实例调整也属于课表内容 → 触发跨设备自动上传（云端全量快照含周实例）
     }
     cloudQueueSoon(); // 课表变化 → 重新同步云端提醒计划
   }
@@ -460,6 +461,7 @@ const Schedule = (function () {
     if (!ok) return;
     setWeekEdited(weekKey, false); // 重置回模板 = 取消该周的「手动改过」标记，恢复自动跟随
     saveWeek(weekKey, deepCopy(getTemplate()));
+    markTemplateDirty(); // v5.32 重置也是课表内容变化 → 触发跨设备自动上传
     cloudQueueSoon(); // 重置后课程变化 → 重新同步云端提醒计划（否则被重置掉的课程旧提醒仍会照发）
     showToast(label + '已重置为模板');
     render();
@@ -2089,6 +2091,39 @@ const Schedule = (function () {
     render();
   }
 
+  // ==================== 周实例跨设备同步（v5.32）====================
+  // 云端全量课表快照 = 模板 + 周实例 + 值周 + 锚点；周实例（本周/下周手动调整、延时课等）随快照同步，
+  // 两台设备展示内容才能始终一致（此前只同步模板，周视图的修改对另一台设备不可见）。
+
+  // 导出全部周实例（供课表云同步 payload 使用）
+  function getWeeksData() { return deepCopy(getWeeks()); }
+
+  // 导入云端周实例：weeks={'YYYY-MM-DD(周一)':{slot:course}}，edited={'YYYY-MM-DD':1}
+  // 只接受合法周 key 与课程槽位；导入后按云端 edited 标记恢复「手动改过」状态
+  function importWeekInstances(weeks, edited) {
+    if (!weeks || typeof weeks !== 'object' || Array.isArray(weeks)) return false;
+    const clean = {}, cleanEdited = {};
+    let n = 0;
+    Object.keys(weeks).forEach(function (k) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return;
+      const src = weeks[k];
+      if (!src || typeof src !== 'object' || Array.isArray(src)) return;
+      const slots = {};
+      Object.keys(src).forEach(function (slot) {
+        const c = src[slot];
+        if (c && typeof c === 'object' && c.name && /^d[1-5]_p(10|[1-9])$/.test(slot)) { slots[slot] = c; n++; }
+      });
+      clean[k] = slots;
+    });
+    if (edited && typeof edited === 'object' && !Array.isArray(edited)) {
+      Object.keys(edited).forEach(function (k) { if (clean[k]) cleanEdited[k] = 1; });
+    }
+    saveJSON(WEEKS_KEY, clean);
+    saveJSON(WEEK_EDIT_KEY, cleanEdited);
+    if (n > 0) { cloudQueueSoon(); render(); } // 周实例变化 → 提醒计划跟随
+    return true;
+  }
+
   return {
     render: render,
     toggleTemplateMode: toggleTemplateMode,
@@ -2126,6 +2161,9 @@ const Schedule = (function () {
     importTemplateData: importTemplateData,
     clearWeekInstances: clearWeekInstances,
     clearFutureWeekInstances: clearFutureWeekInstances,
+    // 周实例跨设备同步（v5.32）
+    getWeeksData: getWeeksData,
+    importWeekInstances: importWeekInstances,
     // 模板 → 周实例跟随（v5.27）
     applyTemplateToWeeks: applyTemplateToWeeks,
     selfHealThisWeek: selfHealThisWeek,

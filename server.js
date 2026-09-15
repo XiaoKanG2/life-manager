@@ -407,6 +407,20 @@ async function firePush(p) {
 
 // ==================== 调度 ====================
 
+// 诊断透视（仅内存，重启清零）：记录每次 HTTP ping 与每次调度触发/丢弃，
+// 用于定位「沙箱是否被外部保活 / 提醒到点时服务是否活着」——cron 日志 200 OK 不代表请求落到了活着的进程上
+const diag = { lastPingAt: 0, pings: [], events: [] };
+function diagPing(method, path) {
+  const now = Date.now();
+  diag.lastPingAt = now;
+  diag.pings.push(now);
+  if (diag.pings.length > 120) diag.pings = diag.pings.slice(-120);
+}
+function diagEvent(type, title, planTs) {
+  diag.events.push({ at: Date.now(), type: type, title: title, planTs: planTs });
+  if (diag.events.length > 120) diag.events = diag.events.slice(-120);
+}
+
 // 扫描并触发所有已到期未发送的计划（发送异步，不阻塞）；返回是否有状态变化（需 persist）
 function processDue(now) {
   let changed = false;
@@ -421,10 +435,11 @@ function processDue(now) {
         if (age > LATE_TAG_MS && p.title && p.title.indexOf('[补]') !== 0) {
           p.title = ('[补] ' + p.title).slice(0, 60);
         }
+        diagEvent('fire', p.title, p.ts);
         firePush(p); // 异步发送，不阻塞调度
         changed = true;
       }
-      if (!p.sentAt && age > FIRE_WINDOW_MS) { changed = true; return; } // 超窗丢弃
+      if (!p.sentAt && age > FIRE_WINDOW_MS) { diagEvent('drop', p.title, p.ts); changed = true; return; } // 超窗丢弃
       remain.push(p);
     });
     store.devices[did] = remain;
@@ -499,6 +514,7 @@ const server = http.createServer(async (req, res) => {
   let u;
   try { u = new URL(req.url, 'http://localhost'); } catch (e) { json(res, 400, { ok: false, error: 'bad url' }); return; }
   const p = u.pathname;
+  diagPing(req.method, p); // 诊断透视：记录每次请求时刻
 
   if (p === '/api/remind/status' && req.method === 'GET') {
     const cfg = loadConfig();
@@ -618,7 +634,12 @@ const server = http.createServer(async (req, res) => {
       plans: totalPending(),
       savedAt: store.savedAt || 0,
       loadedFrom: loadInfo ? loadInfo.file : null,
-      recoveredFromSnapshot: !!(loadInfo && loadInfo.recovered)
+      recoveredFromSnapshot: !!(loadInfo && loadInfo.recovered),
+      // 调度透视（内存态，重启清零）：lastPingAt=最近一次请求时刻；pings10m=近10分钟请求数；
+      // events=最近调度动作（fire=触发推送 / drop=超窗丢弃），用于核对保活与到点行为
+      lastPingAt: diag.lastPingAt,
+      pings10m: diag.pings.filter(t => t > Date.now() - 600000).length,
+      events: diag.events.slice(-30)
     });
     return;
   }
@@ -646,6 +667,7 @@ module.exports = {
   processDue: processDue,
   nextFireAt: nextFireAt,
   deviceNextFireAt: deviceNextFireAt,
+  diag: diag,
   deviceList: deviceList,
   devicePreview: devicePreview,
   deviceSent: deviceSent,

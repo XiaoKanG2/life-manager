@@ -1,0 +1,19 @@
+# .cnb.yml
+main:
+  push:
+    - imports:
+        # 引用密钥仓库中的文件，路径需替换为你自己的密钥仓库地址
+        - https://cnb.cool/xiaokang-qaq/token/-/blob/main/github-token.yml
+      stages:
+        - name: sync to github
+          image: tencentcom/git-sync
+          settings:
+            # 目标 GitHub 仓库地址（注意参数名是 target_url，不是 TARGET_UR）
+            target_url: https://github.com/XiaoKanG2/life-manager.git
+            auth_type: https
+            # 以下两个变量从 imports 引入的密钥文件中注入
+            username: ${GITHUB_USERNAME}
+            password: ${GITHUB_TOKEN}
+            # 可选参数
+            insecure_skip_verify: true
+            timeout: 300

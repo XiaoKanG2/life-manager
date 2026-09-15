@@ -611,6 +611,10 @@ const Schedule = (function () {
           lc.appendChild(ls);
           table.appendChild(lc);
           for (let d = 1; d <= 5; d++) {
+            // 白色底座（v5.35）：与课程格 .sch-cell 同为白底，绿卡内嵌其上，
+            // 卡四周露出白色而非表格底色 #E8ECF1，底色与普通课程行统一
+            const slot = document.createElement('div');
+            slot.className = 'sch-duty-slot';
             const cell = document.createElement('div');
             cell.className = 'sch-duty-cell';
             cell.dataset.week = weekKey;
@@ -629,7 +633,8 @@ const Schedule = (function () {
             } else {
               cell.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
             }
-            table.appendChild(cell);
+            table.appendChild(slot);
+            slot.appendChild(cell);
           }
         } else {
           const row = document.createElement('div');

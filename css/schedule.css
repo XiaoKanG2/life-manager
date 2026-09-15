@@ -177,10 +177,10 @@ body.sch-dragging .sch-cell.sch-empty {
 }
 .sch-ghost-sub { font-size: 9px; font-weight: 400; color: #7A96B0; }
 
-/* 固定行（升旗 / 午休 / 眼保健操） */
+/* 固定行（升旗 / 午休 / 眼保健操）：仅无值周配置的行才会渲染；底色统一白（v5.35） */
 .sch-fixed-row {
     grid-column: 1 / -1;
-    background: #FBFBF3;
+    background: #fff;
     font-size: 10px;
     color: #9C9C74;
     text-align: center;
@@ -188,6 +188,15 @@ body.sch-dragging .sch-cell.sch-empty {
 }
 
 /* 值周固定行：与课程卡片同风格（绿色系区分），可拖动/点击编辑 */
+/* 白色底座（v5.35）：与课程格 .sch-cell 同为白底 + 2px 内边距，
+   绿卡四周露白而非表格底色 #E8ECF1；.sch-duty-cell 的颜色/字体等样式不变 */
+.sch-duty-slot {
+    background: #fff;
+    padding: 2px;
+    display: flex;
+    align-items: stretch;
+}
+.sch-duty-slot .sch-duty-cell { margin: 0; flex: 1; } /* 原 margin:2px 由底座 padding 接管 */
 .sch-duty-cell {
     background: #E8F5EC;
     margin: 2px;

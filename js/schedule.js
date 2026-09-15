@@ -24,7 +24,7 @@ const Schedule = (function () {
 
   const DAY_NAMES = ['星期一', '星期二', '星期三', '星期四', '星期五'];
 
-  // 可排课节次（p8 延时一源表未给时间 → 不提醒；p9/p10 延时二/三）
+  // 可排课节次（p8 延时一 15:30~16:00；p9/p10 延时二/三）
   const PERIODS = [
     { p: 1, label: '第1节', time: '8:20~9:00' },
     { p: 2, label: '第2节', time: '9:30~10:10' },
@@ -33,7 +33,7 @@ const Schedule = (function () {
     { p: 5, label: '第5节', time: '11:45~12:15' },
     { p: 6, label: '第6节', time: '14:00~14:35' },
     { p: 7, label: '第7节', time: '14:45~15:15' },
-    { p: 8, label: '延时一', time: '' },
+    { p: 8, label: '延时一', time: '15:30~16:00' },
     { p: 9, label: '延时二', time: '16:10~16:40' },
     { p: 10, label: '延时三', time: '16:50~17:20' }
   ];
@@ -65,7 +65,7 @@ const Schedule = (function () {
     d5_p6: { name: '信息科技/编程', cls: '3年级3班', room: '③' },
     d1_p7: { name: '信息科技/编程', cls: '4年级7班', room: '②' },
     d2_p7: { name: '信息科技/编程', cls: '3年级5班', room: '①' },
-    // 延时段（源表：延时二/三有课，延时一未排）
+    // 延时段（延时一 15:30~16:00；延时二/三按源表排课）
     d1_p9: { name: '少儿编程' },
     d1_p10: { name: '少儿编程' },
     d2_p10: { name: '少科院', weeks: 'odd' },
@@ -1474,7 +1474,7 @@ const Schedule = (function () {
     return { day: parseInt(m[1], 10), period: parseInt(m[2], 10) };
   }
 
-  // 节次开始分钟（0 点起算），如 '8:20' → 500；无时间（延时一）→ null = 不提醒
+  // 节次开始分钟（0 点起算），如 '8:20' → 500；无时间 → null = 不提醒
   function periodStartMin(period) {
     const per = PERIODS[period - 1];
     if (!per || !per.time) return null;

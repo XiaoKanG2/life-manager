@@ -6,6 +6,6 @@ main:
           image: tencentcom/git-sync
           settings:
             # 目标 GitHub 仓库地址
-            target: https://github.com/XiaoKanG2/life-manager.git
+            target_url: https://github.com/XiaoKanG2/life-manager.git
             # 引用存放令牌的密钥文件（需提前在 CNB 仓库中设置）
             token: $GITHUB_TOKEN

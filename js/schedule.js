@@ -190,6 +190,29 @@ const Schedule = (function () {
     return (mon.getMonth() + 1) + '.' + mon.getDate() + ' ~ ' + (fri.getMonth() + 1) + '.' + fri.getDate();
   }
 
+  // ==================== 学期周次（v5.34）====================
+  // 基准：2026-08-31（周一）为第 1 周 → 9.14~9.18 即第 3 周（单周）。
+  // 可用 localStorage 'schedule_semester_start'（'YYYY-MM-DD'，必须为周一）覆盖默认开学日。
+  // 周次只用于展示；单双周仍以 oddAnchor（weekParity）为权威——两者基准一致时天然同步
+  //（第 1 周周一为单周 → 奇数周 = 单周）。
+  const SEMESTER_START_DEFAULT = '2026-08-31';
+  function semesterStart() {
+    const v = localStorage.getItem('schedule_semester_start');
+    return (v && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : SEMESTER_START_DEFAULT;
+  }
+  function weekNumberOf(weekKey) {
+    try {
+      const mon = new Date(weekKey + 'T00:00:00').getTime();
+      const start = new Date(semesterStart() + 'T00:00:00').getTime();
+      if (isNaN(mon) || isNaN(start)) return null;
+      return Math.max(1, Math.floor((mon - start) / (7 * 86400000)) + 1);
+    } catch (e) { return null; }
+  }
+  function weekTitleOf(weekKey, label) {
+    const n = weekNumberOf(weekKey);
+    return label + '（第' + (n || '?') + '周:' + parityText(weekParity(weekKey)) + '）';
+  }
+
   // ==================== 单双周（隔周课表，v5.28）====================
   // 规则：锚点周一（默认 2026-09-14）所在周为「单周」，之后每过一周单/双轮换。
   // 课程对象可带 weeks 字段：'odd'=仅单周 / 'even'=仅双周 / 缺省=每周。
@@ -489,8 +512,8 @@ const Schedule = (function () {
       content.appendChild(buildFullTemplateBar());
     } else {
       const wk0 = weekKeyOf(0), wk1 = weekKeyOf(1);
-      content.appendChild(buildWeekTable(wk0, '本周（' + parityText(weekParity(wk0)) + '）', weekRangeText(wk0), true));
-      content.appendChild(buildWeekTable(wk1, '下周（' + parityText(weekParity(wk1)) + '）', weekRangeText(wk1), true));
+      content.appendChild(buildWeekTable(wk0, weekTitleOf(wk0, '本周'), weekRangeText(wk0), true));
+      content.appendChild(buildWeekTable(wk1, weekTitleOf(wk1, '下周'), weekRangeText(wk1), true));
     }
 
     // 同步模板按钮状态

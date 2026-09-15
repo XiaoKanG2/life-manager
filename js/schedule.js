@@ -631,7 +631,9 @@ const Schedule = (function () {
               cell.dataset.occupied = '1';
               bindDutyDrag(cell, ri, d);
             } else {
-              cell.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
+              // 空格：卡片 display:none（v5.36）→ 点击新增入口移到白底座上
+              slot.classList.add('sch-duty-empty');
+              slot.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
             }
             table.appendChild(slot);
             slot.appendChild(cell);

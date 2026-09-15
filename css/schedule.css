@@ -212,11 +212,9 @@ body.sch-dragging .sch-cell.sch-empty {
     overflow-wrap: anywhere;
     cursor: grab;
 }
+/* 空值周格：不显示空框（v5.36）；白底座仍在，点击底座可新增 */
 .sch-duty-cell:empty {
-    background: #F7FAF8;
-    box-shadow: inset 0 0 0 1px #E2EDE5;
-    font-weight: 400;
-    cursor: pointer;
+    display: none;
 }
 /* 值周：单双周不匹配 → 整格不展示（透明占位，点击可查看/编辑） */
 .sch-duty-cell.sch-duty-hidden { color: transparent; background: transparent; box-shadow: none; cursor: pointer; }
@@ -225,8 +223,11 @@ body.sch-dragging .sch-cell { background: #F4F9FE; box-shadow: inset 0 0 0 1px #
 body.sch-dragging.sch-drag-duty .sch-duty-cell { background: #F4F9FE; box-shadow: inset 0 0 0 1px #C7DCF0; }
 /* 拖值周时不高亮课程格（反之亦然） */
 body.sch-dragging.sch-drag-duty .sch-cell { background: #fff; box-shadow: none; }
+/* 空底座可点击新增（卡片隐藏后点击入口移到底座） */
+.sch-duty-slot.sch-duty-empty { cursor: pointer; }
+/* 拖值周时空格临时显形（elementFromPoint 才能命中空格落点，且显示高亮框）；非值周拖拽保持隐藏 */
+body.sch-dragging.sch-drag-duty .sch-duty-cell:empty { display: flex; }
 body.sch-dragging:not(.sch-drag-duty) .sch-duty-cell { background: #E8F5EC; box-shadow: none; }
-body.sch-dragging:not(.sch-drag-duty) .sch-duty-cell:empty { background: #F7FAF8; box-shadow: inset 0 0 0 1px #E2EDE5; }
 .sch-duty-cell.drop-target {
     background: #DCEBFA !important;
     box-shadow: inset 0 0 0 2px var(--primary) !important;

@@ -1779,9 +1779,9 @@ const Schedule = (function () {
   // 手机即使完全关闭网页也能收到微信消息。上报失败静默，不影响本地提醒。
 
   // —— 云端终端标识 ——
-  // 优先取「课表同步 key」（设置 → 课表同步 → 同步密钥）作为云端提醒桶标识：
+  // 终端桶标识 = 「课表同步 key」（设置 → 课表同步 → 同步密钥）：
   //   同一 key 的多个设备共享一个桶（同一份课表不重复推）；换 key = 换桶（旧桶残留可用「清空提醒池」兜底）。
-  // 未配置 key 时回退到本浏览器随机 deviceId（同一浏览器内稳定，清缓存 / 换设备会变）。
+  // v5.33 起未配置 key 一律不上报（syncCloudPlan 已门控），下方随机 id 分支仅作兜底保留。
   function cloudTerminal() {
     const sc = loadJSON(SCH_SYNC_KEY, null);
     const key = sc && typeof sc.syncKey === 'string' ? sc.syncKey.trim() : '';
@@ -1881,32 +1881,39 @@ const Schedule = (function () {
     cloudTimer = setTimeout(function () { syncCloudPlan(true); }, 3000);
   }
 
-  // 上报门控：空白设备不上报，避免在云端注册出「无课表、无推送配置」的无用终端桶。
-  // 触发场景：发布平台的自动验证会用全新浏览器环境打开页面（无 localStorage），
-  // 若不加门控，每次部署都会凭空多出几个随机终端桶（且与真实设备重复推送）。
-  // 满足任一即视为「这台设备确实需要云端提醒」：
-  //   ① 已填推送 Token  ② 已填课表同步 key  ③ 本机曾成功上报过（老用户）
-  //   ④ 用户确实编辑/导入过课表（localStorage 里有 schedule_template）
-  //     注意：不能直接用 getTemplateData()——未存模板时会返回内置演示课表，恒为非空，门控就失效了
+  // 上报门控（v5.33 收紧）：必须已配置「课表同步 key」才上报云端提醒计划。
+  // 此前规则（有推送 Token / 有课表 / 曾上报过即上报）会在未配 key 时回退随机 deviceId
+  // 建桶，产生孤儿桶（如 dmttk9tipg5x2ik）且与真实设备重复推送，故废弃。
+  // 注意：不能直接用 getTemplateData() 判断是否有课表——未存模板时会返回内置演示课表，恒为非空。
   function cloudHasIntent() {
     try {
-      const wx = getWxCfg();
-      if (wx && wx.key) return true;
       const sc = loadJSON(SCH_SYNC_KEY, null);
       if (sc && typeof sc.syncKey === 'string' && sc.syncKey.trim()) return true;
-      const c = loadJSON(CLOUD_KEY, null);
-      if (c && c.lastSyncAt > 0) return true;
-      const tpl = loadJSON(TEMPLATE_KEY, null);
-      if (tpl && typeof tpl === 'object' && !Array.isArray(tpl) && Object.keys(tpl).length) return true;
     } catch (e) {}
     return false;
+  }
+
+  // 曾用随机桶上报过、现已无 key：上报一次空计划清空该桶，防止残留计划继续推送。
+  // 每次页面会话最多执行一次（cloudLastSyncAt 内存节流，与正常同步同一窗口）。
+  function cleanupLegacyBucket(base) {
+    const c = loadJSON(CLOUD_KEY, null);
+    if (!c || !(c.lastSyncAt > 0)) return;
+    const legacy = c.deviceId;
+    if (!legacy || String(legacy).length <= 10 || String(legacy).indexOf('d') !== 0) return;
+    if (Date.now() - cloudLastSyncAt < 3600000) return;
+    cloudLastSyncAt = Date.now();
+    fetch(base + '/api/remind/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: legacy, plans: [], wx: null })
+    }).catch(function () {});
   }
 
   function syncCloudPlan(force) {
     if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = null; }
     const base = cloudApiBase();
     if (!base) return;
-    if (!cloudHasIntent()) return; // 空白设备：不上报、不注册云端终端桶
+    if (!cloudHasIntent()) { cleanupLegacyBucket(base); return; } // 未配置同步 key：不上报，仅清理历史随机桶
     const nowMs = Date.now();
     if (!force && nowMs - cloudLastSyncAt < 3600000) return; // 非强制 1 小时内最多一次
     const term = cloudTerminal();

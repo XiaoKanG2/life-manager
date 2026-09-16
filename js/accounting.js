@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.37';
+const APP_VERSION = '5.38';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -2105,7 +2105,8 @@ function schSyncBuildPayload() {
     oddAnchor: schAnchorSignature(),
     duty: schDutyPayload(),
     weeks: (typeof Schedule !== 'undefined' && Schedule.getWeeksData) ? Schedule.getWeeksData() : undefined,
-    weekEdited: (typeof Schedule !== 'undefined' && Schedule.getWeekEdited) ? Schedule.getWeekEdited() : undefined
+    weekEdited: (typeof Schedule !== 'undefined' && Schedule.getWeekEdited) ? Schedule.getWeekEdited() : undefined,
+    progress: (typeof Schedule !== 'undefined' && Schedule.getProgressSnapshot) ? Schedule.getProgressSnapshot() : undefined
   };
 }
 
@@ -2138,6 +2139,7 @@ async function schSyncPull() {
     if (error && error.code !== 'PGRST116') throw error;
     if (!data || !data.data || !Schedule.importTemplateData(data.data.template)) { showToast('云端暂无课表数据'); return; }
     applySchCloudAnchor(data.data); // 单双周锚点随课表一起应用
+    if (data.data.progress && Schedule.importProgress) Schedule.importProgress(data.data.progress); // v5.38 进度一并应用
     // 模板更新后重建「本周及以后」的周实例，否则已初始化过的周仍显示旧课（用户视角＝没同步）
     if (Schedule.clearFutureWeekInstances) Schedule.clearFutureWeekInstances();
     if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now());
@@ -2160,6 +2162,9 @@ async function schSyncForcePull() {
     if (!data || !data.data || !data.data.template) { showToast('云端暂无课表数据'); return; }
     if (!Schedule.importTemplateData(data.data.template)) { showToast('云端课表数据格式无效', 'error'); return; }
     applySchCloudAnchor(data.data); // 单双周锚点 + 值周随课表一起应用
+    if (data.data.progress && Schedule.importProgress) {
+      Schedule.importProgress(data.data.progress); // v5.38 课程进度一并恢复
+    }
     if (data.data.weeks && Schedule.importWeekInstances) {
       Schedule.importWeekInstances(data.data.weeks, data.data.weekEdited); // v5.32 云端周实例一并恢复
     } else if (Schedule.clearWeekInstances) {
@@ -2197,6 +2202,14 @@ function schWeeksSignature(weeks) {
 function schEditedSignature(edited) {
   if (!edited || typeof edited !== 'object' || Array.isArray(edited)) return '';
   return Object.keys(edited).sort().join(',');
+}
+
+// —— 课程进度（随快照跨设备同步，v5.38） ——
+function schProgressSame(cloudProgress) {
+  if (!cloudProgress || typeof cloudProgress !== 'object') return true; // 云端无进度（旧版本）→ 不比较，保留本地
+  try {
+    return JSON.stringify(cloudProgress) === JSON.stringify(Schedule.getProgressSnapshot ? Schedule.getProgressSnapshot() : null);
+  } catch (e) { return true; }
 }
 
 // —— 值周配置（随模板 payload 一起跨设备同步，v5.28） ——
@@ -2274,7 +2287,8 @@ async function schSyncAutoPullRun() {
       && schEditedSignature(data.data.weekEdited) === schEditedSignature(Schedule.getWeekEdited()));
     const tplSame = schTemplateSignature(cloudTpl) === schTemplateSignature(Schedule.getTemplateData())
       && schDutySigEqual(data.data.duty)
-      && weeksSame;
+      && weeksSame
+      && schProgressSame(data.data.progress); // v5.38：进度随快照同步，仅进度变化也会触发拉取
     const anchorSame = !data.data.oddAnchor || data.data.oddAnchor === schAnchorSignature();
     if (tplSame && anchorSame) {
       if (Schedule.setTemplateSyncedAt) Schedule.setTemplateSyncedAt(Date.now()); // 已一致 → 对齐时间戳
@@ -2289,6 +2303,9 @@ async function schSyncAutoPullRun() {
     try {
       ok = Schedule.importTemplateData(cloudTpl);
       applySchCloudAnchor(data.data); // 单双周锚点 + 值周跟随云端
+      if (ok && data.data.progress && Schedule.importProgress) {
+        Schedule.importProgress(data.data.progress); // v5.38：云端进度落地（按 id/ts 合并）
+      }
       if (ok && cloudWeeksSig && Schedule.importWeekInstances) {
         Schedule.importWeekInstances(data.data.weeks, data.data.weekEdited); // 云端周实例直接落地（含本周/下周手动调整）
       } else if (ok && Schedule.clearFutureWeekInstances) {

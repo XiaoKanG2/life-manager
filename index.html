@@ -306,6 +306,34 @@
             </div>
         </div>
 
+        <!-- ========== 进度补录弹窗（v5.38） ========== -->
+        <div class="modal-overlay" id="schProgressModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-close" onclick="Schedule.closeProgressModal()">✕</span>
+                    <span class="modal-title">记录课程进度</span>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <label class="form-label">班级</label>
+                        <select class="note-input" id="schProgClass"></select>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">上课日期</label>
+                        <input type="date" class="note-input" id="schProgDate">
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">进度内容</label>
+                        <input type="text" class="note-input" id="schProgContent" placeholder="如：第3课 在线搜索" maxlength="200">
+                        <div class="sch-remind-hint">记录该班本次课讲到的内容，保存后计入「已上次数」</div>
+                    </div>
+                    <div class="sync-actions">
+                        <button class="sync-btn" onclick="Schedule.saveProgressFromModal()">保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- ========== 上课提醒设置弹窗 ========== -->
         <div class="modal-overlay" id="schRemindModal">
             <div class="modal-content">

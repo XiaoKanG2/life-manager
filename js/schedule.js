@@ -20,6 +20,8 @@ const Schedule = (function () {
   const WEEK_EDIT_KEY = 'schedule_week_edited';       // { 'YYYY-MM-DD': ts } 被手动改过的周实例（不再自动跟随模板）
   const ODD_ANCHOR_KEY = 'schedule_odd_anchor';       // 'YYYY-MM-DD'：单周锚点（该周一为单周，隔周轮换；默认 2026-09-14 那周为单周）
   const WX_KEY = 'schedule_wx_cfg';                   // { provider:'pushplus', key, toSelf, friends:[{name,token}] } 微信推送通道
+  const PROGRESS_KEY = 'schedule_progress';           // { ver, records:[{id,cls,date,slot,course,content,ts}] } 班级课程进度（v5.38）
+  const SUBTAB_KEY = 'schedule_subtab';               // 课表页签内子页：'week' | 'progress'（v5.38）
   const TEMPLATE_ID = '__template__'; // 模板模式下周实例的虚拟 key
 
   const DAY_NAMES = ['星期一', '星期二', '星期三', '星期四', '星期五'];
@@ -501,6 +503,18 @@ const Schedule = (function () {
 
     content.innerHTML = '';
     const tip = document.getElementById('schTip');
+
+    // 子页签（v5.38）：课表 | 进度，选择持久化到 localStorage
+    content.appendChild(buildSubTabBar());
+    const sub = getSubTab();
+    const navActions = document.querySelector('#page-schedule .sch-nav-actions');
+    if (navActions) navActions.style.display = sub === 'progress' ? 'none' : '';
+    if (sub === 'progress') {
+      if (tip) tip.textContent = '记录每个班级的上课进度：点「记一笔」或「＋补录」添加，点班级行查看完整历史';
+      content.appendChild(buildProgressPage());
+      return;
+    }
+
     if (tip) {
       tip.textContent = templateMode
         ? '模板模式：编辑的内容将作为每周课表的初始模板'
@@ -2161,6 +2175,306 @@ const Schedule = (function () {
     return true;
   }
 
+  // ==================== 课程进度（v5.38）====================
+  // 以「班级（cls）」为键记录每个班的上课进度：append-only 日志，最新一条 = 当前进度，
+  // 已上次数 = 记录条数；回退 = 撤销末条（二次确认），历史不可改。随课表全量快照跨设备同步。
+
+  const PROGRESS_VER = 1;
+
+  function getProgressRaw() {
+    const d = loadJSON(PROGRESS_KEY, null);
+    if (!d || d.ver !== PROGRESS_VER || !Array.isArray(d.records)) return { ver: PROGRESS_VER, records: [] };
+    return d;
+  }
+
+  function saveProgressRaw(d) { saveJSON(PROGRESS_KEY, d); }
+
+  // 快照（云端同步用）与导入（按 id 去重、ts 排序合并，LWW）
+  function getProgressSnapshot() { return deepCopy(getProgressRaw()); }
+  function progressSignature() {
+    try { return JSON.stringify(getProgressRaw().records.map(function (r) { return [r.id, r.cls, r.date, r.content]; })); }
+    catch (e) { return ''; }
+  }
+  function importProgress(data) {
+    if (!data || typeof data !== 'object' || data.ver !== PROGRESS_VER || !Array.isArray(data.records)) return false;
+    const cur = getProgressRaw();
+    const byId = {};
+    cur.records.forEach(function (r) { if (r && r.id) byId[r.id] = r; });
+    let n = 0;
+    data.records.forEach(function (r) {
+      if (!r || !r.id || !r.cls) return;
+      const rec = {
+        id: String(r.id).slice(0, 40), cls: String(r.cls).slice(0, 30),
+        date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : todayStr(),
+        slot: typeof r.slot === 'string' ? r.slot.slice(0, 12) : '',
+        course: typeof r.course === 'string' ? r.course.slice(0, 30) : '',
+        content: String(r.content || '').slice(0, 200), ts: Number(r.ts) || 0
+      };
+      if (!byId[rec.id] || byId[rec.id].ts <= rec.ts) { byId[rec.id] = rec; n++; }
+    });
+    const merged = Object.keys(byId).map(function (k) { return byId[k]; }).sort(function (a, b) { return a.ts - b.ts; });
+    saveProgressRaw({ ver: PROGRESS_VER, records: merged });
+    if (n > 0 && getSubTab() === 'progress') render();
+    return true;
+  }
+
+  // 新增一条进度记录（slot/course 自动从该班当周课表取，取不到留空）
+  function addProgress(cls, content, date) {
+    if (!cls) { showToast('请选择班级'); return false; }
+    content = (content || '').trim();
+    if (!content) { showToast('请填写进度内容'); return false; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) date = todayStr();
+    const auto = findClassLesson(cls);
+    const d = getProgressRaw();
+    d.records.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      cls: cls, date: date, slot: auto ? auto.slot : '', course: auto ? auto.name : '',
+      content: content.slice(0, 200), ts: Date.now()
+    });
+    saveProgressRaw(d);
+    markTemplateDirty(); // 进度随全量快照同步：标记 dirty → 3s 防抖自动上传
+    if (getSubTab() === 'progress') render();
+    return true;
+  }
+
+  // 撤销某班最近一条（仅末条可撤，返回被撤记录；无记录返回 null）
+  function undoLastProgress(cls) {
+    const d = getProgressRaw();
+    let idx = -1, last = null;
+    d.records.forEach(function (r, i) { if (r.cls === cls && (!last || r.ts >= last.ts)) { last = r; idx = i; } });
+    if (idx < 0) return null;
+    d.records.splice(idx, 1);
+    saveProgressRaw(d);
+    markTemplateDirty();
+    if (getSubTab() === 'progress') render();
+    return last;
+  }
+
+  function deleteClassProgress(cls) {
+    const d = getProgressRaw();
+    d.records = d.records.filter(function (r) { return r.cls !== cls; });
+    saveProgressRaw(d);
+    markTemplateDirty();
+    if (getSubTab() === 'progress') render();
+  }
+
+  function clearAllProgress() {
+    saveProgressRaw({ ver: PROGRESS_VER, records: [] });
+    markTemplateDirty();
+    if (getSubTab() === 'progress') render();
+  }
+
+  // 班级清单：模板 + 全部周实例去重（非空 cls）；有进度但不在清单 = 未排课
+  function classListOf() {
+    const found = [];
+    function add(v) { if (v && found.indexOf(v) === -1) found.push(v); }
+    const t = getTemplate();
+    Object.keys(t).forEach(function (s) { add(t[s].cls); });
+    const weeks = getWeeks();
+    Object.keys(weeks).forEach(function (wk) {
+      Object.keys(weeks[wk]).forEach(function (s) { add(weeks[wk][s].cls); });
+    });
+    return found.sort();
+  }
+
+  // 该班在本周实例里的课（用于记录时自动带节次/课程名）
+  function findClassLesson(cls) {
+    const data = getData(weekKeyOf(0));
+    const slots = Object.keys(data).sort();
+    for (let i = 0; i < slots.length; i++) {
+      if (data[slots[i]] && data[slots[i]].cls === cls) return { slot: slots[i], name: data[slots[i]].name || '' };
+    }
+    return null;
+  }
+
+  function gradeOf(cls) {
+    const m = /^(\d{1,2})年级/.exec(cls || '');
+    return m ? m[1] + '年级' : '其他';
+  }
+
+  // ---- 子页签 ----
+  function getSubTab() {
+    const v = localStorage.getItem(SUBTAB_KEY);
+    return v === 'progress' ? 'progress' : 'week';
+  }
+  function setSubTab(v) {
+    localStorage.setItem(SUBTAB_KEY, v === 'progress' ? 'progress' : 'week');
+    templateMode = false; // 离开课表视图时退出模板模式，避免回来时停留在编辑态
+    render();
+  }
+
+  function buildSubTabBar() {
+    const bar = document.createElement('div');
+    bar.className = 'sch-subtabs';
+    const cur = getSubTab();
+    [['week', '📅 课表'], ['progress', '📈 进度']].forEach(function (p) {
+      const b = document.createElement('span');
+      b.className = 'sch-subtab' + (cur === p[0] ? ' active' : '');
+      b.textContent = p[1];
+      b.onclick = function () { if (cur !== p[0]) setSubTab(p[0]); };
+      bar.appendChild(b);
+    });
+    return bar;
+  }
+
+  // ---- 进度页面 ----
+  function buildProgressPage() {
+    const box = document.createElement('div');
+    box.className = 'sch-prog';
+
+    // 顶部操作条
+    const bar = document.createElement('div');
+    bar.className = 'sch-prog-actions';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'sch-prog-btn primary';
+    addBtn.textContent = '＋ 补录进度';
+    addBtn.onclick = openProgressModal;
+    bar.appendChild(addBtn);
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'sch-prog-btn danger';
+    clearBtn.textContent = '清空全部';
+    clearBtn.onclick = function () {
+      showConfirmModal('清空全部进度', '将删除所有班级的进度记录（含历史），且无法恢复。确定继续吗？').then(function (ok) {
+        if (ok) { clearAllProgress(); showToast('已清空全部进度'); }
+      });
+    };
+    bar.appendChild(clearBtn);
+    box.appendChild(bar);
+
+    // 按年级分组：排课班级 + 有进度但未排课的班级（置底）
+    const raw = getProgressRaw();
+    const byCls = {};
+    raw.records.forEach(function (r) {
+      if (!byCls[r.cls]) byCls[r.cls] = [];
+      byCls[r.cls].push(r);
+    });
+    const scheduled = classListOf();
+    const all = scheduled.slice();
+    Object.keys(byCls).forEach(function (c) { if (all.indexOf(c) === -1) all.push(c); });
+
+    const groups = {};
+    all.forEach(function (c) { const g = scheduled.indexOf(c) === -1 ? '未排课' : gradeOf(c); (groups[g] = groups[g] || []).push(c); });
+    const order = ['1年级', '2年级', '3年级', '4年级', '5年级', '6年级', '其他', '未排课'];
+    Object.keys(groups).forEach(function (g) { if (order.indexOf(g) === -1) order.push(g); });
+
+    let any = false;
+    order.forEach(function (g) {
+      if (!groups[g] || !groups[g].length) return;
+      any = true;
+      const head = document.createElement('div');
+      head.className = 'sch-prog-grade' + (g === '未排课' ? ' stale' : '');
+      head.textContent = g === '未排课' ? '未排课（历史进度）' : g;
+      box.appendChild(head);
+      groups[g].forEach(function (cls) {
+        box.appendChild(buildProgressRow(cls, byCls[cls] || []));
+      });
+    });
+    if (!any) {
+      const empty = document.createElement('div');
+      empty.className = 'sch-prog-empty';
+      empty.textContent = '暂无进度记录：点「＋ 补录进度」开始记录，或点班级行的「记一笔」';
+      box.appendChild(empty);
+    }
+    return box;
+  }
+
+  function buildProgressRow(cls, records) {
+    const sorted = records.slice().sort(function (a, b) { return b.ts - a.ts; });
+    const row = document.createElement('div');
+    row.className = 'sch-prog-row';
+
+    const main = document.createElement('div');
+    main.className = 'sch-prog-main';
+    const name = document.createElement('div');
+    name.className = 'sch-prog-cls';
+    name.textContent = cls;
+    main.appendChild(name);
+    const info = document.createElement('div');
+    info.className = 'sch-prog-info';
+    if (sorted.length) {
+      const last = sorted[0];
+      info.textContent = '已上 ' + sorted.length + ' 次 · 最近 ' + last.date.slice(5).replace('-', '.') + ' ' + last.content;
+    } else {
+      info.textContent = '暂无记录';
+    }
+    main.appendChild(info);
+    main.onclick = function () { row.classList.toggle('open'); }; // 点击展开/收起历史
+    row.appendChild(main);
+
+    const ops = document.createElement('div');
+    ops.className = 'sch-prog-ops';
+    const addBtn = document.createElement('span');
+    addBtn.className = 'sch-prog-op';
+    addBtn.textContent = '记一笔';
+    addBtn.onclick = function (e) { e.stopPropagation(); openProgressModal(cls); };
+    ops.appendChild(addBtn);
+    if (sorted.length) {
+      const undoBtn = document.createElement('span');
+      undoBtn.className = 'sch-prog-op warn';
+      undoBtn.textContent = '撤销';
+      undoBtn.onclick = function (e) {
+        e.stopPropagation();
+        const last = sorted[0];
+        showConfirmModal('撤销进度', '撤销 ' + cls + ' 最近一条记录？\n' + last.date + ' ' + last.content).then(function (ok) {
+          if (ok) { undoLastProgress(cls); showToast('已撤销'); }
+        });
+      };
+      ops.appendChild(undoBtn);
+    }
+    row.appendChild(ops);
+
+    // 历史时间线（展开显示）
+    if (sorted.length) {
+      const hist = document.createElement('div');
+      hist.className = 'sch-prog-hist';
+      sorted.forEach(function (r) {
+        const line = document.createElement('div');
+        line.className = 'sch-prog-hist-line';
+        line.textContent = r.date + (r.slot ? '（' + slotLabelOf(r.slot) + '）' : '') + ' · ' + r.content;
+        hist.appendChild(line);
+      });
+      row.appendChild(hist);
+    }
+    return row;
+  }
+
+  // ---- 补录弹窗（复用课程弹窗的 overlay 结构）----
+  let progressModalCls = '';
+  function openProgressModal(cls) {
+    progressModalCls = cls || '';
+    const sel = document.getElementById('schProgClass');
+    const dateInput = document.getElementById('schProgDate');
+    const contentInput = document.getElementById('schProgContent');
+    // 班级下拉 = 模板/周实例全部班级 + 当前值（进度不排课的班级也能记录历史）
+    const found = classListOf();
+    if (cls && found.indexOf(cls) === -1) found.push(cls);
+    sel.innerHTML = '';
+    found.forEach(function (v) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v;
+      sel.appendChild(o);
+    });
+    sel.value = cls || (found[0] || '');
+    dateInput.value = todayStr();
+    contentInput.value = '';
+    document.getElementById('schProgressModal').classList.add('active');
+    setTimeout(function () { contentInput.focus(); }, 100);
+  }
+  function closeProgressModal() {
+    document.getElementById('schProgressModal').classList.remove('active');
+  }
+  function saveProgressFromModal() {
+    const cls = document.getElementById('schProgClass').value;
+    const date = document.getElementById('schProgDate').value;
+    const content = document.getElementById('schProgContent').value;
+    if (addProgress(cls, content, date)) { closeProgressModal(); showToast('进度已记录'); }
+  }
+
+  function todayStr() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
   return {
     render: render,
     toggleTemplateMode: toggleTemplateMode,
@@ -2201,6 +2515,20 @@ const Schedule = (function () {
     // 周实例跨设备同步（v5.32）
     getWeeksData: getWeeksData,
     importWeekInstances: importWeekInstances,
+    // 课程进度（v5.38：随全量快照跨设备同步）
+    getProgressSnapshot: getProgressSnapshot,
+    importProgress: importProgress,
+    progressSignature: progressSignature,
+    addProgress: addProgress,
+    undoLastProgress: undoLastProgress,
+    deleteClassProgress: deleteClassProgress,
+    clearAllProgress: clearAllProgress,
+    classListOf: classListOf,
+    openProgressModal: openProgressModal,
+    closeProgressModal: closeProgressModal,
+    saveProgressFromModal: saveProgressFromModal,
+    getSubTab: getSubTab,
+    setSubTab: setSubTab,
     // 模板 → 周实例跟随（v5.27）
     applyTemplateToWeeks: applyTemplateToWeeks,
     selfHealThisWeek: selfHealThisWeek,

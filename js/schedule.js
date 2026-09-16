@@ -2378,6 +2378,11 @@ const Schedule = (function () {
     return box;
   }
 
+  // 年级 → 徽标配色（g1~g6 对应 1~6 年级，其余灰色）
+  function gradeColorCls(cls) {
+    const m = /^([1-6])年级/.exec(cls || '');
+    return m ? 'g' + m[1] : 'g0';
+  }
   function buildProgressRow(cls, records) {
     const sorted = records.slice().sort(function (a, b) { return b.ts - a.ts; });
     const row = document.createElement('div');
@@ -2385,17 +2390,33 @@ const Schedule = (function () {
 
     const main = document.createElement('div');
     main.className = 'sch-prog-main';
-    const name = document.createElement('div');
-    name.className = 'sch-prog-cls';
-    name.textContent = cls;
-    main.appendChild(name);
+    const av = document.createElement('div');
+    av.className = 'sch-prog-avatar ' + gradeColorCls(cls);
+    av.textContent = (cls || '?').charAt(0);
+    main.appendChild(av);
     const info = document.createElement('div');
     info.className = 'sch-prog-info';
+    const nameLine = document.createElement('div');
+    nameLine.className = 'sch-prog-name';
+    nameLine.textContent = cls;
+    if (sorted.length) {
+      const cnt = document.createElement('span');
+      cnt.className = 'sch-prog-cnt';
+      cnt.textContent = '已上 ' + sorted.length + ' 次';
+      nameLine.appendChild(cnt);
+    }
+    info.appendChild(nameLine);
     if (sorted.length) {
       const last = sorted[0];
-      info.textContent = '已上 ' + sorted.length + ' 次 · 最近 ' + last.date.slice(5).replace('-', '.') + ' ' + last.content;
+      const lastLine = document.createElement('div');
+      lastLine.className = 'sch-prog-last';
+      lastLine.textContent = '最近 ' + last.date.slice(5).replace('-', '.') + ' · ' + last.content;
+      info.appendChild(lastLine);
     } else {
-      info.textContent = '暂无记录';
+      const emptyLine = document.createElement('div');
+      emptyLine.className = 'sch-prog-last none';
+      emptyLine.textContent = '暂无记录，点「记一笔」开始';
+      info.appendChild(emptyLine);
     }
     main.appendChild(info);
     main.onclick = function () { row.classList.toggle('open'); }; // 点击展开/收起历史
@@ -2430,7 +2451,11 @@ const Schedule = (function () {
       sorted.forEach(function (r) {
         const line = document.createElement('div');
         line.className = 'sch-prog-hist-line';
-        line.textContent = r.date + (r.slot ? '（' + slotLabelOf(r.slot) + '）' : '') + ' · ' + r.content;
+        const dt = document.createElement('span');
+        dt.className = 'sch-prog-hist-date';
+        dt.textContent = r.date + (r.slot ? '（' + slotLabelOf(r.slot) + '）' : '');
+        line.appendChild(dt);
+        line.appendChild(document.createTextNode(r.content));
         hist.appendChild(line);
       });
       row.appendChild(hist);
@@ -2445,6 +2470,8 @@ const Schedule = (function () {
     const sel = document.getElementById('schProgClass');
     const dateInput = document.getElementById('schProgDate');
     const contentInput = document.getElementById('schProgContent');
+    const voiceBtn = document.getElementById('schProgVoiceBtn');
+    if (voiceBtn) voiceBtn.style.display = progVoiceSupported() ? '' : 'none';
     // 班级下拉 = 模板/周实例全部班级 + 当前值（进度不排课的班级也能记录历史）
     const found = classListOf();
     if (cls && found.indexOf(cls) === -1) found.push(cls);
@@ -2461,6 +2488,7 @@ const Schedule = (function () {
     setTimeout(function () { contentInput.focus(); }, 100);
   }
   function closeProgressModal() {
+    stopProgVoice(true);
     document.getElementById('schProgressModal').classList.remove('active');
   }
   function saveProgressFromModal() {
@@ -2468,6 +2496,73 @@ const Schedule = (function () {
     const date = document.getElementById('schProgDate').value;
     const content = document.getElementById('schProgContent').value;
     if (addProgress(cls, content, date)) { closeProgressModal(); showToast('进度已记录'); }
+  }
+
+  // ---- 语音输入（v5.39，Web Speech API，中文识别，结果追加到进度内容框）----
+  let progRecognition = null;
+  let progVoiceBase = '';        // 识别开始时输入框已有内容
+  function progVoiceSupported() {
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
+  function setProgVoiceUI(active) {
+    const btn = document.getElementById('schProgVoiceBtn');
+    const hint = document.getElementById('schProgHint');
+    if (btn) btn.classList.toggle('rec', !!active);
+    if (hint) hint.textContent = active ? '正在聆听，请说话…（再次点麦克风结束）' : '记录该班本次课讲到的内容，保存后计入「已上次数」';
+  }
+  function stopProgVoice(silent) {
+    if (progRecognition) {
+      try { progRecognition.stop(); } catch (e) { /* ignore */ }
+      progRecognition = null;
+    }
+    if (typeof silent !== 'boolean' || silent) return;
+    setProgVoiceUI(false);
+    const input = document.getElementById('schProgContent');
+    if (input) input.value = progVoiceBase; // 丢弃未定稿的中间结果，保留已定稿文本
+  }
+  function toggleProgVoice() {
+    if (progRecognition) { stopProgVoice(false); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { showToast('当前浏览器不支持语音输入'); return; }
+    const input = document.getElementById('schProgContent');
+    if (!input) return;
+    try {
+      progVoiceBase = input.value || '';
+      const rec = new SR();
+      progRecognition = rec;
+      rec.lang = 'zh-CN';
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = function (e) {
+        let fin = '', interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript || '';
+          if (e.results[i].isFinal) fin += t; else interim += t;
+        }
+        if (fin) progVoiceBase = (progVoiceBase + fin).slice(0, 200); // 中文直接拼接，不加空格
+        if (input) input.value = (progVoiceBase + interim).slice(0, 200);
+      };
+      rec.onend = function () {
+        if (progRecognition === rec) { progRecognition = null; setProgVoiceUI(false); }
+      };
+      rec.onerror = function (e) {
+        if (progRecognition === rec) progRecognition = null;
+        setProgVoiceUI(false);
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+          showToast('麦克风权限被拒绝，请在系统设置中允许');
+        } else if (e.error === 'no-speech') {
+          showToast('没听到声音，请再试一次');
+        } else if (e.error !== 'aborted') {
+          showToast('语音识别失败：' + e.error);
+        }
+      };
+      rec.start();
+      setProgVoiceUI(true);
+    } catch (err) {
+      progRecognition = null;
+      setProgVoiceUI(false);
+      showToast('语音输入启动失败');
+    }
   }
 
   function todayStr() {
@@ -2527,6 +2622,7 @@ const Schedule = (function () {
     openProgressModal: openProgressModal,
     closeProgressModal: closeProgressModal,
     saveProgressFromModal: saveProgressFromModal,
+    toggleProgVoice: toggleProgVoice,
     getSubTab: getSubTab,
     setSubTab: setSubTab,
     // 模板 → 周实例跟随（v5.27）

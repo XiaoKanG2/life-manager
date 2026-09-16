@@ -21,92 +21,220 @@
     font-weight: 600;
 }
 
-/* 课程进度（v5.38） */
-.sch-prog { padding: 10px 12px 20px; }
+/* 课程进度（v5.39 视觉重设计） */
+.sch-prog { padding: 10px 14px 24px; }
 .sch-prog-actions {
     display: flex;
     gap: 10px;
-    justify-content: flex-end;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
 }
 .sch-prog-btn {
     border: none;
-    border-radius: 8px;
-    padding: 7px 14px;
+    border-radius: 12px;
+    padding: 10px 0;
     font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
 }
-.sch-prog-btn.primary { background: #4A90D9; color: #fff; }
-.sch-prog-btn.danger { background: #F2F4F7; color: #C0392B; }
-.sch-prog-grade {
-    font-size: 12px;
-    color: #888;
-    padding: 10px 6px 4px;
-    font-weight: 600;
+.sch-prog-btn.primary {
+    flex: 1;
+    background: linear-gradient(135deg, #5AA3E8, #4A90D9);
+    color: #fff;
+    box-shadow: 0 3px 8px rgba(74, 144, 217, 0.28);
 }
-.sch-prog-grade.stale { color: #BBB; }
+.sch-prog-btn.primary:active { transform: scale(0.98); }
+.sch-prog-btn.danger {
+    flex: 0 0 auto;
+    background: #fff;
+    color: #C0392B;
+    border: 1px solid #F0D9D6;
+    padding: 10px 14px;
+    box-shadow: none;
+}
+/* 年级分组标题：左侧竖条 */
+.sch-prog-grade {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: #7A8494;
+    font-weight: 600;
+    padding: 14px 4px 6px;
+}
+.sch-prog-grade::before {
+    content: '';
+    width: 4px;
+    height: 12px;
+    border-radius: 2px;
+    background: #4A90D9;
+}
+.sch-prog-grade.stale::before { background: #C8CFD8; }
+/* 班级卡片 */
 .sch-prog-row {
     background: #fff;
-    border-radius: 10px;
-    margin: 6px 0;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    border-radius: 14px;
+    margin: 7px 0;
+    box-shadow: 0 1px 4px rgba(31, 45, 61, 0.07);
     overflow: hidden;
 }
 .sch-prog-main {
     display: flex;
     align-items: center;
-    padding: 11px 12px;
+    gap: 10px;
+    padding: 12px;
     cursor: pointer;
 }
-.sch-prog-cls {
-    font-size: 14px;
-    font-weight: 600;
-    color: #333;
-    width: 88px;
+/* 班级徽标：按年级渐变配色 */
+.sch-prog-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
 }
+.sch-prog-avatar.g1 { background: linear-gradient(135deg, #FF9A8B, #FF6A88); }
+.sch-prog-avatar.g2 { background: linear-gradient(135deg, #FFC46B, #FF9A44); }
+.sch-prog-avatar.g3 { background: linear-gradient(135deg, #7BD88F, #3EB575); }
+.sch-prog-avatar.g4 { background: linear-gradient(135deg, #64C7CC, #3BA3D0); }
+.sch-prog-avatar.g5 { background: linear-gradient(135deg, #7E9BFF, #5D78E8); }
+.sch-prog-avatar.g6 { background: linear-gradient(135deg, #B78BFA, #8E5CF0); }
+.sch-prog-avatar.g0 { background: linear-gradient(135deg, #B0BCC9, #8E9BAC); }
 .sch-prog-info {
     flex: 1;
-    font-size: 12px;
-    color: #888;
-    line-height: 1.5;
+    min-width: 0;
+}
+.sch-prog-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #2B3442;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
 }
+.sch-prog-cnt {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    color: #4A90D9;
+    background: #EAF3FC;
+    border-radius: 8px;
+    padding: 1px 7px;
+}
+.sch-prog-last {
+    font-size: 12px;
+    color: #5A6472;
+    line-height: 1.5;
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sch-prog-last.none { color: #AAB4C0; }
 .sch-prog-ops {
     display: flex;
     gap: 6px;
     flex-shrink: 0;
-    padding-right: 10px;
+    padding-right: 12px;
 }
 .sch-prog-op {
     font-size: 12px;
     color: #4A90D9;
-    padding: 4px 8px;
+    padding: 5px 10px;
     background: #EFF5FC;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     user-select: none;
+    -webkit-user-select: none;
 }
+.sch-prog-op:active { background: #DCEBFA; }
 .sch-prog-op.warn { color: #C0392B; background: #FBF0EE; }
-.sch-prog-hist { display: none; padding: 2px 14px 12px 14px; }
+/* 历史时间线（展开显示）：竖线 + 圆点 */
+.sch-prog-hist {
+    display: none;
+    padding: 6px 14px 12px 20px;
+    border-top: 1px solid #F0F3F6;
+    background: #FBFCFE;
+}
 .sch-prog-row.open .sch-prog-hist { display: block; }
 .sch-prog-hist-line {
+    position: relative;
     font-size: 12px;
-    color: #666;
-    padding: 5px 0;
-    border-top: 1px dashed #EEE;
+    color: #5A6472;
+    padding: 5px 0 5px 16px;
     line-height: 1.5;
+}
+.sch-prog-hist-line::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #9FC3E8;
+}
+.sch-prog-hist-line:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 4.5px;
+    top: 22px;
+    bottom: -3px;
+    width: 1px;
+    background: #E3EAF1;
+}
+.sch-prog-hist-date {
+    color: #8A94A2;
+    font-size: 11px;
+    margin-right: 6px;
 }
 .sch-prog-empty {
     text-align: center;
-    color: #AAA;
+    color: #AAB4C0;
     font-size: 13px;
-    padding: 30px 20px;
-    line-height: 1.6;
+    padding: 36px 20px;
+    line-height: 1.8;
+}
+.sch-prog-empty::before {
+    content: '📝';
+    display: block;
+    font-size: 32px;
+    margin-bottom: 6px;
+}
+/* 弹窗语音输入（v5.39） */
+.sch-voice-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.sch-voice-row .note-input { flex: 1; min-width: 0; }
+.sch-voice-btn {
+    flex: 0 0 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: #EFF2F6;
+    font-size: 16px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.sch-voice-btn.rec {
+    background: #FDEBEA;
+    animation: schVoicePulse 1.2s ease-in-out infinite;
+}
+@keyframes schVoicePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(226, 75, 74, 0.35); }
+    50% { box-shadow: 0 0 0 6px rgba(226, 75, 74, 0); }
 }
 
 .sch-tip {

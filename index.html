@@ -324,8 +324,11 @@
                     </div>
                     <div class="form-row">
                         <label class="form-label">进度内容</label>
-                        <input type="text" class="note-input" id="schProgContent" placeholder="如：第3课 在线搜索" maxlength="200">
-                        <div class="sch-remind-hint">记录该班本次课讲到的内容，保存后计入「已上次数」</div>
+                        <div class="sch-voice-row">
+                            <input type="text" class="note-input" id="schProgContent" placeholder="如：第3课 在线搜索" maxlength="200">
+                            <span class="sch-voice-btn" id="schProgVoiceBtn" title="语音输入" onclick="Schedule.toggleProgVoice()">🎤</span>
+                        </div>
+                        <div class="sch-remind-hint" id="schProgHint">记录该班本次课讲到的内容，保存后计入「已上次数」</div>
                     </div>
                     <div class="sync-actions">
                         <button class="sync-btn" onclick="Schedule.saveProgressFromModal()">保存</button>

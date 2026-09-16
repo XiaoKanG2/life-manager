@@ -2328,7 +2328,7 @@ const Schedule = (function () {
     const addBtn = document.createElement('button');
     addBtn.className = 'sch-prog-btn primary';
     addBtn.textContent = '＋ 补录进度';
-    addBtn.onclick = openProgressModal;
+    addBtn.onclick = function () { openProgressModal(); }; // 不能直接绑 openProgressModal：事件对象会被当成班级参数（v5.39 修复 [object PointerEvent]）
     bar.appendChild(addBtn);
     const clearBtn = document.createElement('button');
     clearBtn.className = 'sch-prog-btn danger';
@@ -2466,7 +2466,7 @@ const Schedule = (function () {
   // ---- 补录弹窗（复用课程弹窗的 overlay 结构）----
   let progressModalCls = '';
   function openProgressModal(cls) {
-    progressModalCls = cls || '';
+    progressModalCls = (typeof cls === 'string') ? cls : '';
     const sel = document.getElementById('schProgClass');
     const dateInput = document.getElementById('schProgDate');
     const contentInput = document.getElementById('schProgContent');

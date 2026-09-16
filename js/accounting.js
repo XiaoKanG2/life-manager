@@ -1,7 +1,7 @@
 /* ========== 资产盘点 - 核心业务逻辑 ========== */
 
 // ==================== 版本号（唯一来源，修改此处即可） ====================
-const APP_VERSION = '5.39';
+const APP_VERSION = '5.40';
 
 // ==================== 存储 Keys ====================
 const ACCOUNT_KEY = 'asset_accounts';
@@ -2104,6 +2104,7 @@ function schSyncBuildPayload() {
     template: Schedule.getTemplateData(),
     oddAnchor: schAnchorSignature(),
     duty: schDutyPayload(),
+    dutyWeeks: (typeof Schedule !== 'undefined' && Schedule.getDutyWeeksSnapshot) ? Schedule.getDutyWeeksSnapshot() : undefined, // v5.40 按周值周覆盖
     weeks: (typeof Schedule !== 'undefined' && Schedule.getWeeksData) ? Schedule.getWeeksData() : undefined,
     weekEdited: (typeof Schedule !== 'undefined' && Schedule.getWeekEdited) ? Schedule.getWeekEdited() : undefined,
     progress: (typeof Schedule !== 'undefined' && Schedule.getProgressSnapshot) ? Schedule.getProgressSnapshot() : undefined
@@ -2224,6 +2225,14 @@ function schDutySigEqual(cloudDuty) {
   } catch (e) { return true; }
 }
 
+// —— 按周值周覆盖签名（v5.40） ——
+function schDutyWeeksSigEqual(cloudDw) {
+  if (!cloudDw || typeof cloudDw !== 'object' || Array.isArray(cloudDw)) return true; // 旧版本云端无此字段 → 不比较
+  try {
+    return JSON.stringify(cloudDw) === JSON.stringify(Schedule.getDutyWeeksSnapshot ? Schedule.getDutyWeeksSnapshot() : null);
+  } catch (e) { return true; }
+}
+
 // 云端 data 对象 → { template, oddAnchor, duty }（锚点与值周随课表一起应用）
 function applySchCloudAnchor(cloudData) {
   if (!cloudData || typeof Schedule === 'undefined') return;
@@ -2232,6 +2241,9 @@ function applySchCloudAnchor(cloudData) {
   }
   if (Array.isArray(cloudData.duty) && Schedule.importDutyRows) {
     Schedule.importDutyRows(cloudData.duty);
+  }
+  if (cloudData.dutyWeeks && Schedule.importDutyWeeks) {
+    Schedule.importDutyWeeks(cloudData.dutyWeeks); // v5.40 按周值周覆盖随快照应用
   }
 }
 
@@ -2287,6 +2299,7 @@ async function schSyncAutoPullRun() {
       && schEditedSignature(data.data.weekEdited) === schEditedSignature(Schedule.getWeekEdited()));
     const tplSame = schTemplateSignature(cloudTpl) === schTemplateSignature(Schedule.getTemplateData())
       && schDutySigEqual(data.data.duty)
+      && schDutyWeeksSigEqual(data.data.dutyWeeks) // v5.40
       && weeksSame
       && schProgressSame(data.data.progress); // v5.38：进度随快照同步，仅进度变化也会触发拉取
     const anchorSame = !data.data.oddAnchor || data.data.oddAnchor === schAnchorSignature();

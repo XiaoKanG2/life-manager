@@ -318,6 +318,79 @@ const Schedule = (function () {
     return true;
   }
 
+  // ===== 按周值周覆盖（v5.40）=====
+  // 背景：值周原本是全局配置（不分周），拖动本周的守餐/守午休会把下周也一起改掉。
+  // 现改为：周视图拖动/编辑只写入该周的覆盖（schedule_duty_weeks[weekKey]）；
+  //         模板视图仍编辑全局默认；无覆盖的周回退全局默认（兼容 v5.39 及以前的数据）。
+  const DUTY_WEEKS_KEY = 'schedule_duty_weeks';
+
+  function getDutyWeeksRaw() {
+    const d = loadJSON(DUTY_WEEKS_KEY, null);
+    return (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
+  }
+
+  // 任意来源（云端/覆盖存档）的 rows → 与 FIXED_ROWS 对齐的合法结构；非法返回 null
+  function normalizeDutyRows(src) {
+    if (!Array.isArray(src) || src.length !== FIXED_ROWS.length) return null;
+    const rows = FIXED_ROWS.map(function (fr) { return fr.duty ? deepCopy(fr.duty) : null; });
+    for (let i = 0; i < rows.length; i++) {
+      if (!rows[i]) continue;
+      const s = src[i];
+      if (!s || typeof s !== 'object') continue;
+      const d = {};
+      for (let day = 1; day <= 5; day++) {
+        const v = s[day] !== undefined ? s[day] : s[String(day)];
+        if (typeof v === 'string' && v.trim()) d[day] = v.trim().slice(0, 12);
+      }
+      rows[i] = d;
+    }
+    return rows;
+  }
+
+  // 某周的值周行：该周有覆盖用覆盖，否则回退全局默认；模板 → 全局默认
+  function getDutyRowsFor(weekKey) {
+    if (!weekKey || weekKey === TEMPLATE_ID) return getDutyRows();
+    const ov = getDutyWeeksRaw()[weekKey];
+    if (ov) {
+      const rows = normalizeDutyRows(ov.rows);
+      if (rows) return rows;
+    }
+    return getDutyRows();
+  }
+
+  function saveDutyRowsFor(weekKey, rows) {
+    if (!weekKey || weekKey === TEMPLATE_ID) { saveDutyRows(rows); return; }
+    const all = getDutyWeeksRaw();
+    all[weekKey] = { ver: DUTY_VER, rows: deepCopy(rows) };
+    saveJSON(DUTY_WEEKS_KEY, all);
+  }
+
+  // 清除按周覆盖：weekKey 省略 = 全清（重置周实例/以云端为准/套用完整课表）
+  function clearDutyOverride(weekKey) {
+    if (weekKey) {
+      const all = getDutyWeeksRaw();
+      delete all[weekKey];
+      saveJSON(DUTY_WEEKS_KEY, all);
+    } else {
+      saveJSON(DUTY_WEEKS_KEY, {});
+    }
+  }
+
+  // 云端 dutyWeeks → 本地（整表替换，结构逐周校验）
+  function importDutyWeeks(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+    const clean = {};
+    Object.keys(data).forEach(function (wk) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(wk)) return;
+      const rows = normalizeDutyRows(data[wk] && data[wk].rows);
+      if (rows) clean[wk] = { ver: DUTY_VER, rows: rows };
+    });
+    saveJSON(DUTY_WEEKS_KEY, clean);
+    return true;
+  }
+
+  function getDutyWeeksSnapshot() { return deepCopy(getDutyWeeksRaw()); }
+
   // 固定行开始分钟（'9:00~9:30' → 540；'17:20' → 1040；无时间 → null）
   function fixedStartMin(time) {
     const hm = String(time || '').split('~')[0].split(':');
@@ -381,7 +454,7 @@ const Schedule = (function () {
     const thisMon = weekKeyOf(0);
     let n = 0;
     Object.keys(weeks).forEach(function (k) {
-      if (k >= thisMon) { delete weeks[k]; delete edited[k]; n++; }
+      if (k >= thisMon) { delete weeks[k]; delete edited[k]; clearDutyOverride(k); n++; } // v5.40 覆盖一并清
     });
     saveJSON(WEEKS_KEY, weeks);
     saveJSON(WEEK_EDIT_KEY, edited);
@@ -419,7 +492,7 @@ const Schedule = (function () {
           if (!weeks[k][slot] || !weeks[k][slot].name) { weeks[k][slot] = deepCopy(tpl[slot]); n++; }
         });
       } else {
-        weeks[k] = deepCopy(tpl); n++;
+        weeks[k] = deepCopy(tpl); clearDutyOverride(k); n++; // v5.40 整周重建 → 值周覆盖一并清，回退全局默认
       }
     });
     if (n) {
@@ -485,6 +558,7 @@ const Schedule = (function () {
     const ok = await showConfirmModal('重置' + label, '将' + label + '课表恢复为模板内容，' + label + '已有的调整会被覆盖。确定重置吗？');
     if (!ok) return;
     setWeekEdited(weekKey, false); // 重置回模板 = 取消该周的「手动改过」标记，恢复自动跟随
+    clearDutyOverride(weekKey); // v5.40 重置也清按周值周覆盖 → 回退全局默认
     saveWeek(weekKey, deepCopy(getTemplate()));
     markTemplateDirty(); // v5.32 重置也是课表内容变化 → 触发跨设备自动上传
     cloudQueueSoon(); // 重置后课程变化 → 重新同步云端提醒计划（否则被重置掉的课程旧提醒仍会照发）
@@ -614,7 +688,7 @@ const Schedule = (function () {
           // 值周行：时间/名称列 + 5 天各自安排（可拖动/点击编辑；单双周不匹配 → 整格不展示）
           const isTpl = (weekKey === TEMPLATE_ID);
           const wkParity = isTpl ? null : weekParity(weekKey);
-          const dutyRows = getDutyRows();
+          const dutyRows = getDutyRowsFor(weekKey); // v5.40 按周取值
           const lc = document.createElement('div');
           lc.className = 'sch-time-cell';
           const lb = document.createElement('b');
@@ -639,15 +713,15 @@ const Schedule = (function () {
               // 该周没有这项值周 → 完全不展示（仍占位防误拖，点击可查看/编辑）
               cell.classList.add('sch-duty-hidden');
               cell.dataset.occupied = '1';
-              cell.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
+              cell.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d, weekKey); });
             } else if (txt) {
               cell.textContent = dutyDisplayOf(txt, fr.label);
               cell.dataset.occupied = '1';
-              bindDutyDrag(cell, ri, d);
+              bindDutyDrag(cell, ri, d, weekKey);
             } else {
               // 空格：卡片 display:none（v5.36）→ 点击新增入口移到白底座上
               slot.classList.add('sch-duty-empty');
-              slot.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d); });
+              slot.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(ri, d, weekKey); });
             }
             table.appendChild(slot);
             slot.appendChild(cell);
@@ -1147,7 +1221,7 @@ const Schedule = (function () {
       const toSlot = kind === 'duty' ? target.dataset.duty : target.dataset.slot;
       drag = null;
       document.body.classList.remove('sch-drag-duty');
-      if (kind === 'duty') moveDuty(fromSlot, toSlot);
+      if (kind === 'duty') moveDuty(fromSlot, toSlot, fromWeek); // v5.40 只改来源周
       else moveCourse(fromWeek, fromSlot, toWeek, toSlot);
     } else {
       drag = null;
@@ -1158,15 +1232,15 @@ const Schedule = (function () {
 
   // ==================== 值周拖拽 / 编辑 ====================
 
-  // 值周拖放：fromSlot = 'duty:行:天'，toEnc = '行:天'；值周为全局配置（不分周）
-  function moveDuty(fromSlot, toEnc) {
+  // 值周拖放：fromSlot = 'duty:行:天'，toEnc = '行:天'；只写入来源周的覆盖（v5.40 按周独立）
+  function moveDuty(fromSlot, toEnc, weekKey) {
     const fp = String(fromSlot).split(':');
     const tp = String(toEnc).split(':');
     const fromRow = parseInt(fp[1], 10), fromDay = parseInt(fp[2], 10);
     const toRow = parseInt(tp[0], 10), toDay = parseInt(tp[1], 10);
     if (isNaN(fromRow) || isNaN(toRow) || !FIXED_ROWS[toRow] || !FIXED_ROWS[toRow].duty) { render(); return; }
     if (fromRow === toRow && fromDay === toDay) { render(); return; }
-    const rows = getDutyRows();
+    const rows = getDutyRowsFor(weekKey);
     const txt = rows[fromRow] && rows[fromRow][fromDay];
     if (!txt) { render(); return; }
     // 目标已有安排 → 互换；空格 → 移入
@@ -1175,27 +1249,27 @@ const Schedule = (function () {
     if (other) rows[fromRow][fromDay] = other;
     else delete rows[fromRow][fromDay];
     rows[toRow][toDay] = txt;
-    saveDutyRows(rows);
+    saveDutyRowsFor(weekKey, rows);
     dutyChanged();
     showToast('已调整：' + FIXED_ROWS[toRow].label + ' ' + DAY_NAMES[toDay - 1] + (other ? '（互换）' : ''));
     render();
   }
 
-  // 轻点值周格 → 编辑（prompt：改文本 / 加「单：」「双：」前缀 / 留空删除）
-  function editDuty(rowIdx, day) {
+  // 轻点值周格 → 编辑（prompt：改文本 / 加「单：」「双：」前缀 / 留空删除）；v5.40 只改该周
+  function editDuty(rowIdx, day, weekKey) {
     const fr = FIXED_ROWS[rowIdx];
     if (!fr || !fr.duty) return;
-    const rows = getDutyRows();
+    const rows = getDutyRowsFor(weekKey);
     const cur = dutyDisplayOf((rows[rowIdx] && rows[rowIdx][day]) || '', fr.label);
     const tip = fr.label + '（' + DAY_NAMES[day - 1] + ' ' + fr.time + '）\n' +
       '输入值周安排；前缀「单：」= 仅单周、「双：」= 仅双周；留空 = 删除';
     const v = prompt(tip, cur);
     if (v === null) return; // 取消
-    const rows2 = getDutyRows();
+    const rows2 = getDutyRowsFor(weekKey);
     if (!rows2[rowIdx]) rows2[rowIdx] = {};
     const t = String(v).trim().slice(0, 12);
     if (t) rows2[rowIdx][day] = t; else delete rows2[rowIdx][day];
-    saveDutyRows(rows2);
+    saveDutyRowsFor(weekKey, rows2);
     dutyChanged();
     render();
   }
@@ -1206,11 +1280,12 @@ const Schedule = (function () {
     cloudQueueSoon();
   }
 
-  function bindDutyDrag(el, rowIdx, day) {
+  function bindDutyDrag(el, rowIdx, day, weekKey) { // v5.40：绑定实际所在周
+    weekKey = weekKey || weekKeyOf(0);
     const slot = 'duty:' + rowIdx + ':' + day;
-    el.addEventListener('mousedown', function (e) { mouseDown(e, el, weekKeyOf(0), slot); });
-    el.addEventListener('touchstart', function (e) { touchStart(e, el, weekKeyOf(0), slot); }, { passive: false });
-    el.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(rowIdx, day); });
+    el.addEventListener('mousedown', function (e) { mouseDown(e, el, weekKey, slot); });
+    el.addEventListener('touchstart', function (e) { touchStart(e, el, weekKey, slot); }, { passive: false });
+    el.addEventListener('click', function () { if (!drag && Date.now() >= dutyClickGuard) editDuty(rowIdx, day, weekKey); });
   }
 
   function moveCourse(fromWeek, fromSlot, toWeek, toSlot) {
@@ -1538,9 +1613,9 @@ const Schedule = (function () {
     return items;
   }
 
-  // 遍历某天需提醒的值周条目（cb = (slot, 行label, 开始分钟, 提前量)）
-  function collectDutyItems(dow, parity, cb) {
-    const rows = getDutyRows();
+  // 遍历某天需提醒的值周条目（cb = (slot, 行label, 开始分钟, 提前量)）；weekKey = 该日期所属周（v5.40）
+  function collectDutyItems(dow, parity, cb, weekKey) {
+    const rows = getDutyRowsFor(weekKey || weekKeyOf(0));
     FIXED_ROWS.forEach(function (fr, ri) {
       if (!fr.duty) return;
       const startMin = fixedStartMin(fr.time);
@@ -1898,13 +1973,13 @@ const Schedule = (function () {
           body: dateText + ' ' + DAY_NAMES[dow - 1] + ' ' + PERIODS[p - 1].label + ' ' + hmStart + ' 上课（提前 ' + leadText + weeksTag + '）\n' + whoText
         });
       }
-      // 值周提醒：固定行时间 + 默认提前量 + 单双周过滤（与课程同规则）
+      // 值周提醒：固定行时间 + 默认提前量 + 单双周过滤（与课程同规则）；按该日期所属周取值周配置（v5.40）
       collectDutyItems(dow, parity, function (slot, label, startMin, lead) {
         const ri = parseInt(slot.split(':')[1], 10);
         const fr = FIXED_ROWS[ri];
         const hmStart = String(fr.time).split('~')[0];
         const leadText = lead >= 60 ? (Math.floor(lead / 60) + ' 小时' + (lead % 60 ? ' ' + (lead % 60) + ' 分钟' : '')) : (lead + ' 分钟');
-        const txt = (getDutyRows()[ri] || {})[dow] || '';
+        const txt = (getDutyRowsFor(wk)[ri] || {})[dow] || '';
         const dp = dutyParityOf(txt);
         const weeksTag = dp ? '，' + parityText(dp) : '';
         const dm = dateStr.split('-');
@@ -2139,6 +2214,7 @@ const Schedule = (function () {
   function clearWeekInstances() {
     localStorage.removeItem(WEEKS_KEY);
     localStorage.removeItem(WEEK_EDIT_KEY);
+    clearDutyOverride(); // v5.40 按周值周覆盖一并清空
     render();
   }
 
@@ -2610,6 +2686,10 @@ const Schedule = (function () {
     // 周实例跨设备同步（v5.32）
     getWeeksData: getWeeksData,
     importWeekInstances: importWeekInstances,
+    // 按周值周覆盖（v5.40）
+    getDutyWeeksSnapshot: getDutyWeeksSnapshot,
+    importDutyWeeks: importDutyWeeks,
+    clearDutyOverride: clearDutyOverride,
     // 课程进度（v5.38：随全量快照跨设备同步）
     getProgressSnapshot: getProgressSnapshot,
     importProgress: importProgress,
